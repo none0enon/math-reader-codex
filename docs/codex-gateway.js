@@ -291,15 +291,74 @@
 
     async function ask(config, input, options) {
         const payload = await buildAskPayload(input);
-        const data = await requestJson(config, '/v1/ask', {
-            ...(options || {}),
-            method: 'POST',
-            body: payload
-        });
+        const data = options && options.lectureJob
+            ? await askLectureJob(config, payload, options)
+            : await requestJson(config, '/v1/ask', {
+                ...(options || {}),
+                method: 'POST',
+                body: payload
+            });
         if (typeof data.text !== 'string') {
             throw gatewayError('codex_gateway_answer_invalid', 'Codex Gateway response is missing text');
         }
         return { text: data.text, model: data.model ? String(data.model) : '' };
+    }
+
+    async function askLectureJob(config, payload, options) {
+        const id = options.lectureJob.id || globalThis.crypto.randomUUID();
+        // Persist the id before submission: a lost POST response can be retried
+        // with the same id without paying for a second inference request.
+        if (options.lectureJob.onCreated) options.lectureJob.onCreated(id);
+        const deadline = Date.now() + 35 * 60 * 1000;
+        let submitted = Boolean(options.lectureJob.id);
+        let lastNetworkError;
+        let networkFailures = 0;
+        while (Date.now() < deadline) {
+            if (options.signal && options.signal.aborted) {
+                throw gatewayError('codex_gateway_aborted', 'Stopped waiting for the lecture; reopen it to resume.');
+            }
+            let job;
+            try {
+                job = await requestJson(config, submitted ? '/v1/lecture-jobs/' + id : '/v1/lecture-jobs', {
+                    fetchImpl: options.fetchImpl,
+                    signal: options.signal,
+                    timeoutMs: 30 * 1000,
+                    ...(submitted ? {} : { method: 'POST', body: { id, request: payload } })
+                });
+                submitted = true;
+                lastNetworkError = null;
+                networkFailures = 0;
+            } catch (error) {
+                if (error.code === 'job_not_found') {
+                    // The gateway restarted or its result retention elapsed.
+                    submitted = false;
+                } else if (error.code === 'not_found' && !submitted) {
+                    throw gatewayError('codex_gateway_upgrade_required', 'Update and restart the private gateway to enable resumable lecture generation.');
+                } else if (error.code === 'codex_gateway_network_error' || error.code === 'codex_gateway_timeout' || error.name === 'AbortError'
+                    || (error.status >= 502 && error.status <= 504 && error.code !== 'queue_full')) {
+                    lastNetworkError = error;
+                    if (++networkFailures >= 3) {
+                        throw gatewayError('codex_gateway_network_error',
+                            'Cannot reach the gateway. The lecture job is retained; reopen it to resume. ' + error.message);
+                    }
+                } else {
+                    throw error;
+                }
+            }
+            if (job) {
+                if (job.status === 'completed') return job;
+                if (job.status === 'failed') {
+                    throw gatewayError(job.error && job.error.code, job.error && job.error.message);
+                }
+                if (job.status !== 'pending') {
+                    throw gatewayError('codex_gateway_response_invalid', 'The gateway returned an invalid lecture job status.');
+                }
+            }
+            await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+        throw gatewayError('codex_gateway_timeout', lastNetworkError
+            ? 'The gateway connection was lost. Reopen the lecture to retrieve its result.'
+            : 'Stopped waiting for the lecture. Reopen it to retrieve its result.');
     }
 
     return {

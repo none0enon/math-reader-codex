@@ -112,6 +112,10 @@ All `/v1/` endpoints require `Authorization: Bearer <gateway-access-token>`.
 - `GET /v1/status`: readiness and non-secret authentication status.
 - `GET /v1/models`: the available model IDs and supported reasoning effort options.
 - `POST /v1/ask`: one mathematics request, returning `{ "text": "..." }`.
+- `POST /v1/lecture-jobs`: submit `{ "id": "<client UUID>", "request": <ask request> }`; retrying the same id and input reuses the existing job.
+- `GET /v1/lecture-jobs/<id>`: retrieve `pending`, `completed` (with `text`), or `failed` (with `error`). These endpoints require the same bearer token.
+
+Chapter lectures use these background jobs so a disconnected browser does not cancel inference. The page saves only the job id and connection/model selection in its local storage, then resumes polling when that chapter is reopened. Each job has a 30-minute deadline including queue time; completed results remain in memory for another 30 minutes. Restarting the gateway loses its jobs, and the page resubmits missing jobs. Update and restart the gateway before using the new frontend; other AI requests retain `/v1/ask` behavior.
 
 The request accepts `systemPrompt`, `messages`, optional `model` and `reasoningEffort`, and optional `pdfAttachment: { base64, name }`. Message content is a string or an array of `text` and inline `image_url` blocks. Audio is not accepted by this endpoint. Errors have the form `{ "error": { "code": "...", "message": "..." } }`.
 

@@ -11,6 +11,7 @@ import {
   readTlsOptions,
 } from './config.mjs';
 import { GatewayEngine } from './engine.mjs';
+import { LectureJobs } from './jobs.mjs';
 import { GatewayError, abortError, asGatewayError } from './errors.mjs';
 
 function sendJson(response, statusCode, body, extraHeaders = {}) {
@@ -158,13 +159,15 @@ function requestSignal(request, response, timeoutMs) {
 }
 
 export function createGatewayHandler({ config, engine, token }) {
+  const lectureJobs = new LectureJobs(engine, config.maxQueueDepth);
   return async function gatewayHandler(request, response) {
     let cancellation;
     try {
       applyCors(request, response, config);
       const url = new URL(request.url || '/', 'http://gateway.invalid');
+      const jobMatch = /^\/v1\/lecture-jobs\/([a-f0-9-]{36})$/i.exec(url.pathname);
       if (request.method === 'OPTIONS') {
-        if (!['/v1/ask', '/v1/models', '/v1/status'].includes(url.pathname)) {
+        if (!['/v1/ask', '/v1/models', '/v1/status', '/v1/lecture-jobs'].includes(url.pathname) && !jobMatch) {
           throw new GatewayError('not_found', 'Endpoint not found.', 404);
         }
         // Compatibility with browsers using PNA preflights. Modern browsers
@@ -190,6 +193,15 @@ export function createGatewayHandler({ config, engine, token }) {
       if (url.search) throw new GatewayError('invalid_request', 'Query parameters are not supported.', 400);
 
       cancellation = requestSignal(request, response, config.requestTimeoutMs);
+      if (request.method === 'POST' && url.pathname === '/v1/lecture-jobs') {
+        const body = await readJsonBody(request, config.maxBodyBytes, cancellation.signal);
+        sendJson(response, 202, lectureJobs.create(body));
+        return;
+      }
+      if (request.method === 'GET' && jobMatch) {
+        sendJson(response, 200, lectureJobs.read(jobMatch[1]));
+        return;
+      }
       if (request.method === 'GET' && url.pathname === '/v1/status') {
         sendJson(response, 200, await engine.status());
         return;

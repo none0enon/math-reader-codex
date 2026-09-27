@@ -19388,7 +19388,7 @@
                     reasoningEffort: settings.codexReasoningEffort || '',
                     pdfAttachment: options.pdfAttachment
                 },
-                { timeoutMs: codexGatewayModule().MAX_REQUEST_TIMEOUT_MS }
+                { timeoutMs: codexGatewayModule().MAX_REQUEST_TIMEOUT_MS, lectureJob: options.lectureJob }
             );
             return result.text;
         }
@@ -20334,16 +20334,28 @@ ${i18n('prompt_outline_gen')}`;
             }
         }
 
+        const activeLectureChapters = new Set();
+
         async function generateChapterContent(bookId, chapterIndex) {
             const book = appData.books.find(b => b.id === bookId);
-            const lectureData = appData.lectures?.[bookId];
+            let lectureData = appData.lectures?.[bookId];
             if (!book || !lectureData || !lectureData.chapters[chapterIndex]) return;
 
-            const chapter = lectureData.chapters[chapterIndex];
+            let chapter = lectureData.chapters[chapterIndex];
             if (chapter.status === 'ready') return; // 已生成
-            if (chapter.status === 'generating') return; // 正在生成中，防止重复调用
+            const chapterId = chapter.id;
+            const jobStorageKey = 'codexLectureJob:' + bookId + ':' + chapterId;
+            // A saved 'generating' flag does not mean a request survived reload.
+            // Only a live call in this page prevents resuming the saved job.
+            if (activeLectureChapters.has(jobStorageKey)) return;
+            const refreshChapter = () => {
+                lectureData = appData.lectures?.[bookId];
+                chapter = lectureData?.chapters?.find(item => item.id === chapterId);
+                return !!chapter;
+            };
 
             chapter.status = 'generating';
+            delete chapter.generationError;
             saveData();
 
             // 如果用户正在查看，立刻刷新为"生成中"状态
@@ -20351,8 +20363,23 @@ ${i18n('prompt_outline_gen')}`;
                 displayLectureContent();
             }
 
+            activeLectureChapters.add(jobStorageKey);
             activeLectureGenerationCount++;
             try {
+                let lectureJob;
+                if (appData.settings?.codexEnabled) {
+                    const settings = appData.settings;
+                    const connection = JSON.stringify([
+                        settings.codexGatewayUrl, settings.codexModel, settings.codexReasoningEffort,
+                        chapter.startPage, chapter.endPage, currentLang
+                    ]);
+                    let savedJob;
+                    try { savedJob = JSON.parse(mrLocalStorage.getItem(jobStorageKey) || 'null'); } catch (_) {}
+                    lectureJob = {
+                        id: savedJob?.connection === connection ? savedJob.id : undefined,
+                        onCreated: id => mrLocalStorage.setItem(jobStorageKey, JSON.stringify({ id, connection }))
+                    };
+                }
                 const systemPrompt = i18n('prompt_lecture_sys');
 
                 const userMessage = `${i18n('prompt_lecture_book')}${book.title}
@@ -20375,20 +20402,27 @@ ${i18n('prompt_lecture_gen')}`;
 
                 const result = await callAI(systemPrompt, [{ role: 'user', content: userMessage }], {
                     maxTokens: 8192,
-                    pdfAttachment
+                    pdfAttachment,
+                    lectureJob
                 });
 
-                const contentText = result || i18n('toast_content_gen_failed');
+                if (!String(result || '').trim()) throw new Error(i18n('toast_content_gen_failed'));
+                if (!refreshChapter()) return; // The chapter may have been deleted while waiting.
+                const contentText = result;
+                const generatedAt = new Date().toISOString();
+                // Commit the content before marking the chapter ready. A failed
+                // IndexedDB write must leave the completed gateway job resumable.
+                await saveLectureContent(bookId, chapter.id, contentText, generatedAt);
+                if (!refreshChapter()) return;
                 chapter.status = 'ready';
-                chapter.generatedAt = new Date().toISOString();
+                chapter.generatedAt = generatedAt;
                 chapter.updatedAt = chapter.generatedAt;
                 chapter.contentUpdatedAt = chapter.generatedAt;
                 lectureData.updatedAt = chapter.generatedAt;
-                // 内容存入 IndexedDB，不放 localStorage
-                await saveLectureContent(bookId, chapter.id, contentText, chapter.contentUpdatedAt);
                 // 同时在内存中缓存，供当前会话直接使用
                 chapter._contentCache = contentText;
                 saveData();
+                mrLocalStorage.removeItem(jobStorageKey);
                 showToast(i18n('toast_lecture_synced'));
                 // 讲义正文单独同步到云端；lecture_upload 提交正文后自己会发布 metadata，
                 // 这里不再另外触发一次 metadata 同步。
@@ -20404,7 +20438,14 @@ ${i18n('prompt_lecture_gen')}`;
 
             } catch (err) {
                 console.error('生成章节内容失败:', err);
+                // Transport failures keep the id so reopening retrieves the
+                // original job instead of launching another inference request.
+                if (typeof err.code === 'string' && !['codex_gateway_network_error', 'codex_gateway_timeout', 'codex_gateway_aborted'].includes(err.code)) {
+                    mrLocalStorage.removeItem(jobStorageKey);
+                }
+                if (!refreshChapter()) return;
                 chapter.status = 'error';
+                chapter.generationError = String(err.message || err).slice(0, 2000);
                 chapter.updatedAt = new Date().toISOString();
                 lectureData.updatedAt = chapter.updatedAt;
                 saveData();
@@ -20415,6 +20456,7 @@ ${i18n('prompt_lecture_gen')}`;
                 }
                 renderNotesPage();
             } finally {
+                activeLectureChapters.delete(jobStorageKey);
                 activeLectureGenerationCount = Math.max(0, activeLectureGenerationCount - 1);
                 if (activeLectureGenerationCount === 0 && !r2SyncInProgress && r2PendingSyncQueue.length > 0) {
                     const lectureUploadIndex = r2PendingSyncQueue.findIndex(item =>
@@ -20462,7 +20504,7 @@ ${i18n('prompt_lecture_gen')}`;
             }
             
             // 如果内容未生成，先生成
-            if (chapter.status !== 'ready' && chapter.status !== 'generating') {
+            if (chapter.status !== 'ready' && chapter.status !== 'error') {
                 generateChapterContent(bookId, chapterIndex);
             }
             
@@ -20508,7 +20550,7 @@ ${i18n('prompt_lecture_gen')}`;
                 container.innerHTML = `
                     <div style="text-align:center;padding:60px 20px;color:var(--text-muted);">
                         <p style="font-size:16px;margin-bottom:12px;">${i18n('generation_failed')}</p>
-                        <p style="font-size:13px;margin-bottom:20px;">${i18n('network_api_retry')}</p>
+                        <p style="font-size:13px;margin-bottom:20px;">${escapeHtml(chapter.generationError || i18n('network_api_retry'))}</p>
                         <button onclick="retryGenerateChapter()" style="padding:10px 24px;border-radius:10px;background:var(--accent);color:white;border:none;font-size:14px;font-weight:600;cursor:pointer;">${i18n('regenerate')}</button>
                     </div>`;
                 return;
