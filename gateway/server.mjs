@@ -203,7 +203,10 @@ export function createGatewayHandler({ config, engine, token }) {
         return;
       }
       if (request.method === 'GET' && url.pathname === '/v1/status') {
-        sendJson(response, 200, await engine.status());
+        sendJson(response, 200, {
+          ...await engine.status(),
+          capabilities: { lectureJobs: true },
+        });
         return;
       }
       if (request.method === 'GET' && url.pathname === '/v1/models') {
