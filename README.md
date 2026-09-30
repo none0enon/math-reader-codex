@@ -44,7 +44,7 @@ This repository ships the current math-reader-codex web app as an Android APK. B
 
 ### 2. 配置 AI
 
-**个人 ChatGPT 订阅模式**：可在 API Setting 中启用 Codex 私有网关，让数学问答、图片/PDF、讲义和批改使用 Codex，音频继续使用 Gemini。无需 OpenAI API Key，但需要一台运行网关的电脑/私有服务器、独立 ChatGPT 登录和私有 HTTPS 连接；不是把后端托管在 Codex 桌面应用内。部署、限制与验证步骤见 [个人 Codex 网关](gateway/README.md)。默认关闭，不改变现有 API 设置或 APK/PWA 发布流程。
+**个人 ChatGPT 订阅模式**：可在 API Setting 中启用 Codex 私有网关，再在设置页「API 配置」中为每个 AI 功能选择 Codex 网关、主 API 或副 API（首次使用时沿用当前调用方式；该配置只存本机、不云同步，随 ZIP 导出/导入），音频继续使用 Gemini。无需 OpenAI API Key，但需要一台运行网关的电脑/私有服务器、独立 ChatGPT 登录和私有 HTTPS 连接；不是把后端托管在 Codex 桌面应用内。部署、限制与验证步骤见 [个人 Codex 网关](gateway/README.md)。默认关闭，不改变现有 API 设置或 APK/PWA 发布流程。
 
 进入 **设置 → API Setting**：
 
@@ -234,7 +234,7 @@ The bottom navigation is **Class, Library, Reader, Lectures, Notes, Exercise, Se
 
 ### 2. Configure AI
 
-**Personal ChatGPT subscription mode:** enable the private Codex gateway in API Setting to route mathematics, images/PDFs, lectures and grading to Codex while retaining Gemini for audio. No OpenAI API key is used. A gateway host, separate ChatGPT login and private HTTPS connection are required; Codex desktop itself does not host the backend. See the [gateway setup and limitations](gateway/README.md). The option is off by default and preserves existing API settings and APK/PWA release workflows.
+**Personal ChatGPT subscription mode:** enable the private Codex gateway in API Setting, then choose Codex Gateway, Primary API or Backup API for each AI feature in Settings › API by Feature (initially matching the previous routing; stored only on the device, never cloud-synced, included in ZIP export/import). Audio keeps using Gemini. No OpenAI API key is used. A gateway host, separate ChatGPT login and private HTTPS connection are required; Codex desktop itself does not host the backend. See the [gateway setup and limitations](gateway/README.md). The option is off by default and preserves existing API settings and APK/PWA release workflows.
 
 Open **Settings → API Setting**:
 
