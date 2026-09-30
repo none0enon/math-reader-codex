@@ -6806,6 +6806,7 @@
                 exercise_grading_invalid_response:'AI 批改结果格式无效，请重试。',
                 grade_done:'评分完成: {0} 道成功',grade_done_fail:'，{0} 道失败',
                 generating_pdf:'正在生成PDF ({0} 题)，渲染公式中...',
+                lecture_pdf_math_unavailable:'公式渲染组件未加载，请刷新后重试。',
                 rendering_q:'渲染第 {0}/{1} 题...',exported_q:'已导出 {0} 道题',
                 question_num:'第 {0} 题',processing_file:'正在处理: {0}...',
                 recognized_q:'已识别 {0} 道题目',loading_pdf:'加载PDF中...',
@@ -6996,6 +6997,7 @@
                 exercise_grading_invalid_response:'The AI grading response has an invalid format. Please try again.',
                 grade_done:'Grading done: {0} passed',grade_done_fail:', {0} failed',
                 generating_pdf:'Generating PDF ({0} questions)...',
+                lecture_pdf_math_unavailable:'The math renderer is not loaded. Reload and try again.',
                 rendering_q:'Rendering {0}/{1}...',exported_q:'Exported {0} questions',
                 question_num:'Q{0}',processing_file:'Processing: {0}...',
                 recognized_q:'Recognized {0} questions',loading_pdf:'Loading PDF...',
@@ -7186,6 +7188,7 @@
                 exercise_grading_invalid_response:'La réponse de notation de l’IA a un format invalide. Veuillez réessayer.',
                 grade_done:'Notation terminée : {0} réussies',grade_done_fail:', {0} échouées',
                 generating_pdf:'Génération PDF ({0} questions)...',
+                lecture_pdf_math_unavailable:'Le moteur de rendu des formules est indisponible. Rechargez la page et réessayez.',
                 rendering_q:'Rendu {0}/{1}...',exported_q:'{0} questions exportées',
                 question_num:'Q{0}',processing_file:'Traitement : {0}...',
                 recognized_q:'{0} questions reconnues',loading_pdf:'Chargement du PDF...',
@@ -22472,7 +22475,7 @@ ${i18n('prompt_lecture_gen')}`;
                     const title = (note.title || i18n('note_default')).replace(/[\\/:*?"<>|]/g, '_');
                     const content = await ensureClassroomNoteContent(note);
                     if (!content) { showToast(i18n('note_empty')); return; }
-                    downloadMarkdown(content, title + '.md');
+                    await downloadLecturePdf(content.replace(/\{ref:[^}]+\}/g, ''), title + '.pdf');
                 }
                 return;
             }
@@ -24053,15 +24056,154 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             showToast(i18n('toast_note_deleted'));
         }
 
-        function downloadMarkdown(content, filename) {
-            const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 500);
+        // Measure rendered lines and formulas, so page boundaries never bisect them.
+        function getLecturePdfSlices(body, pageHeight) {
+            const origin = body.getBoundingClientRect().top;
+            const ranges = [];
+            const addRect = rect => {
+                if (rect.width <= 0 || rect.height <= 0) return;
+                ranges.push({
+                    top: Math.max(0, Math.floor(rect.top - origin) - 2),
+                    bottom: Math.ceil(rect.bottom - origin) + 2
+                });
+            };
+            body.querySelectorAll('.katex, .latex-display, h1, h2, h3').forEach(el => addRect(el.getBoundingClientRect()));
+            const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+                acceptNode: node => node.textContent.trim() && !node.parentElement.closest('.katex')
+                    ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
+            });
+            const range = document.createRange();
+            while (walker.nextNode()) {
+                range.selectNodeContents(walker.currentNode);
+                Array.from(range.getClientRects()).forEach(addRect);
+            }
+            ranges.sort((a, b) => a.top - b.top);
+            const merged = [];
+            for (const rect of ranges) {
+                const previous = merged[merged.length - 1];
+                if (previous && rect.top < previous.bottom) previous.bottom = Math.max(previous.bottom, rect.bottom);
+                else merged.push({ ...rect });
+            }
+            const totalHeight = merged.length ? merged[merged.length - 1].bottom : 1;
+            const slices = [];
+            let index = 0;
+            for (let start = 0; start < totalHeight;) {
+                let end = Math.min(start + pageHeight, totalHeight);
+                while (index < merged.length && merged[index].bottom <= end) index++;
+                const crossing = merged[index];
+                if (crossing && crossing.top < end) {
+                    // A formula taller than a sheet gets its own scaled page.
+                    end = crossing.top > start ? crossing.top : crossing.bottom;
+                }
+                slices.push({ start, height: end - start });
+                start = end;
+            }
+            return slices;
+        }
+
+        let lecturePdfExporting = false;
+        async function downloadLecturePdf(content, filename) {
+            if (lecturePdfExporting) { showToast(i18n('toast_processing')); return; }
+            lecturePdfExporting = true;
+            let container;
+            showToast(i18n('toast_processing'));
+            try {
+                if (!window.PDFLib) throw new Error(i18n('pdf_lib_not_loaded'));
+                if (!window.renderMathInElement) throw new Error(i18n('lecture_pdf_math_unavailable'));
+                await ensureHtml2Canvas();
+
+                const pageWidth = 612, pageHeight = 792; // US Letter, in PDF points.
+                const margin = 36;
+                const contentWidth = pageWidth - margin * 2;
+                const contentHeight = pageHeight - margin * 2;
+                const pixelsPerPoint = 2;
+                const renderWidth = contentWidth * pixelsPerPoint;
+                const renderHeight = contentHeight * pixelsPerPoint;
+                container = document.createElement('div');
+                // Keep this visible to html2canvas, but outside the reading interface.
+                container.style.cssText = `position:fixed;left:-99999px;top:0;width:${renderWidth}px;
+                    background:#fff;color:#1a1a1a;pointer-events:none;
+                    --accent:#000;--bg-secondary:#fff;
+                    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;`;
+                const body = document.createElement('div');
+                body.className = 'lecture-body';
+                body.style.cssText = 'display:flow-root;padding:0;font-size:22px;line-height:1.8;';
+                body.innerHTML = renderChatMarkdownLatex(content);
+                container.appendChild(body);
+                document.body.appendChild(container);
+                renderLectureMath(body);
+                body.querySelectorAll('.katex').forEach(el => {
+                    el.style.display = 'inline-block';
+                    el.style.whiteSpace = 'nowrap';
+                });
+                body.querySelectorAll('.katex-display').forEach(el => {
+                    el.style.padding = '0';
+                    el.style.overflow = 'visible';
+                });
+
+                // Match the exercise export's iOS font workaround, scoped to this export.
+                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+                    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+                if (isIOS) {
+                    body.querySelectorAll(`.katex, .katex .mathnormal, .katex .mathit, .katex .mathrm,
+                        .katex .mathbf, .katex .mathbb, .katex .mathcal, .katex .mathfrak, .katex .mathsf,
+                        .katex .mathtt, .katex .mainrm, .katex .amsrm, .katex .textrm, .katex .textit,
+                        .katex .textbf, .katex .textsf, .katex .texttt, .katex .mathdefault,
+                        .katex .mord, .katex .mbin, .katex .mrel, .katex .mopen, .katex .mclose,
+                        .katex .mpunct, .katex .minner, .katex .mop`).forEach(el => {
+                        el.style.setProperty('font-family', "'Times New Roman','STIX Two Math',Georgia,'Noto Serif',serif", 'important');
+                    });
+                }
+                // Request fonts through layout before waiting for the new math to settle.
+                body.getBoundingClientRect();
+                if (document.fonts?.ready) await document.fonts.ready;
+
+                // Fit wide equations before measuring the page boundaries.
+                body.querySelectorAll('.katex').forEach(el => {
+                    const width = el.getBoundingClientRect().width;
+                    if (width > renderWidth) {
+                        el.style.fontSize = (parseFloat(getComputedStyle(el).fontSize) * renderWidth / width) + 'px';
+                    }
+                });
+                const slices = getLecturePdfSlices(body, renderHeight);
+                const pdf = await PDFLib.PDFDocument.create();
+                for (const slice of slices) {
+                    // Capture one page at a time instead of allocating one huge lecture canvas.
+                    const canvas = await html2canvas(body, {
+                        x: 0, y: slice.start, width: renderWidth, height: slice.height,
+                        scale: Math.min(1, renderHeight / slice.height),
+                        backgroundColor: '#ffffff', useCORS: true, logging: false,
+                        windowWidth: renderWidth + 100, windowHeight: renderHeight + 100,
+                        scrollX: 0, scrollY: 0
+                    });
+                    try {
+                        const img = await pdf.embedPng(canvas.toDataURL('image/png'));
+                        const scale = Math.min(contentWidth / img.width, contentHeight / img.height);
+                        const page = pdf.addPage([pageWidth, pageHeight]);
+                        page.drawImage(img, {
+                            x: margin, y: pageHeight - margin - img.height * scale,
+                            width: img.width * scale, height: img.height * scale
+                        });
+                    } finally {
+                        canvas.width = canvas.height = 0;
+                    }
+                }
+                const bytes = await pdf.save();
+                const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                try { a.click(); }
+                finally { setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 5000); }
+                showToast(i18n('toast_export_success'));
+            } catch (error) {
+                console.error('Lecture PDF export failed:', error);
+                showToast(i18n('export_failed') + error.message);
+            } finally {
+                if (container) container.remove();
+                lecturePdfExporting = false;
+            }
         }
 
         async function downloadClassroomNote(type, folderId, sessionId, noteIdx) {
@@ -24074,7 +24216,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             const title = (note.title || i18n('note_default')).replace(/[\\/:*?"<>|]/g, '_');
             const content = await ensureClassroomNoteContent(note);
             if (!content) { showToast(i18n('note_empty')); return; }
-            downloadMarkdown(content, title + '.md');
+            await downloadLecturePdf(content.replace(/\{ref:[^}]+\}/g, ''), title + '.pdf');
         }
 
         async function downloadLectureChapter(bookId, chapterIndex) {
@@ -24089,7 +24231,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             }
             if (!content) { showToast(i18n('cannot_load_lecture')); return; }
             const title = (chapter.title || i18n('lecture')).replace(/[\\/:*?"<>|]/g, '_');
-            downloadMarkdown(content, title + '.md');
+            await downloadLecturePdf(content, title + '.pdf');
         }
 
         async function ensureMaterialData(mat) {
