@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { publicAuth, requireChatgptAccount } from './app-server.mjs';
 import { DISABLED_CODEX_FEATURES } from './config.mjs';
 import { GatewayError, abortError } from './errors.mjs';
+import { LECTURE_QUALITY_INSTRUCTIONS } from './lecture-instructions.mjs';
 import { preparePdfAttachment } from './pdf.mjs';
 import { BoundedQueue } from './queue.mjs';
 import {
@@ -315,7 +316,9 @@ export class GatewayEngine {
           approvalPolicy: 'never',
           personality: 'none',
           serviceName: 'math-reader-codex',
-          developerInstructions: request.systemPrompt,
+          // Replace Codex's coding-agent defaults with the application's exact prompt.
+          baseInstructions: request.systemPrompt,
+          ...(onProgress ? { developerInstructions: LECTURE_QUALITY_INSTRUCTIONS } : {}),
           config: { web_search: 'disabled', features },
         },
         {
