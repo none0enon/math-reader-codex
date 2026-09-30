@@ -14852,7 +14852,7 @@
             const cloud = cloudLectures || {};
             const local = localLectures || {};
             const baseline = Number(cloudSyncedAtMs) || 0;
-            const mergeChapters = (cloudChapters, localChapters) => {
+            const mergeChapters = (bookId, cloudChapters, localChapters) => {
                 const localById = new Map((localChapters || [])
                     .filter(chapter => chapter?.id)
                     .map(chapter => [chapter.id, chapter]));
@@ -14864,9 +14864,12 @@
                     if (!localChapter) return cloudChapter;
                     // 章节主体按结构时间戳取新，阅读进度按 progressUpdatedAt 单独取新，
                     // 两者互不影响：滚动不会翻转正文归属，重生成也不会丢掉阅读位置。
-                    const base = lectureStructureTimestamp(localChapter) >
+                    const generationActive = activeLectureChapters.has(
+                        'codexLectureJob:' + bookId + ':' + localChapter.id);
+                    const base = generationActive || lectureStructureTimestamp(localChapter) >
                         lectureStructureTimestamp(cloudChapter) ? localChapter : cloudChapter;
                     const result = { ...base };
+                    if (generationActive) result.status = 'generating';
                     const cloudProgressTs = lectureProgressTimestamp(cloudChapter);
                     const localProgressTs = lectureProgressTimestamp(localChapter);
                     const progressSource = localProgressTs > cloudProgressTs ? localChapter
@@ -14905,7 +14908,7 @@
                     ...(lectureStructureTimestamp(localLecture) > lectureStructureTimestamp(cloudLecture)
                         ? localLecture : cloudLecture)
                 };
-                result.chapters = mergeChapters(cloudLecture?.chapters, localLecture?.chapters);
+                result.chapters = mergeChapters(bookId, cloudLecture?.chapters, localLecture?.chapters);
                 merged[bookId] = result;
             }
             for (const bookId of Object.keys(local)) {
@@ -20819,6 +20822,25 @@ ${i18n('prompt_outline_gen')}`;
         // Transient previews must never enter IndexedDB, backups, or R2 metadata.
         const lectureGenerationProgress = new Map();
 
+        function getLectureJobState(bookId, chapter) {
+            const settings = appData.settings;
+            const connection = JSON.stringify([
+                settings.codexGatewayUrl, settings.codexModel, settings.codexReasoningEffort,
+                chapter.startPage, chapter.endPage, currentLang
+            ]);
+            let savedJob;
+            try {
+                savedJob = JSON.parse(mrLocalStorage.getItem(
+                    'codexLectureJob:' + bookId + ':' + chapter.id) || 'null');
+            } catch (_) {}
+            return {
+                connection,
+                id: savedJob?.connection === connection &&
+                    typeof savedJob.id === 'string' && /^[a-f0-9-]{36}$/i.test(savedJob.id)
+                    ? savedJob.id : undefined
+            };
+        }
+
         function updateLectureGenerationProgress() {
             if (!currentLecture || currentLecture.isClassroomNote || currentLecture.isPaperAbstract) return;
             const chapter = appData.lectures?.[currentLecture.bookId]?.chapters?.[currentLecture.chapterIndex];
@@ -20856,7 +20878,10 @@ ${i18n('prompt_outline_gen')}`;
             if (!book || !lectureData || !lectureData.chapters[chapterIndex]) return;
 
             let chapter = lectureData.chapters[chapterIndex];
-            if (chapter.status === 'ready') return; // 已生成
+            const lectureUsesCodex = aiFeatureUsesCodex('lecture');
+            const savedJob = lectureUsesCodex ? getLectureJobState(bookId, chapter) : null;
+            // A synced ready flag can precede local receipt of the saved job.
+            if (chapter.status === 'ready' && !savedJob?.id) return;
             const chapterId = chapter.id;
             const jobStorageKey = 'codexLectureJob:' + bookId + ':' + chapterId;
             // A saved 'generating' flag does not mean a request survived reload.
@@ -20888,18 +20913,11 @@ ${i18n('prompt_outline_gen')}`;
             activeLectureGenerationCount++;
             try {
                 let lectureJob;
-                const lectureUsesCodex = aiFeatureUsesCodex('lecture');
                 if (lectureUsesCodex) {
                     onProgress({ stage: 'preparing', partialText: '', reasoningSummary: '', elapsedMs: 0 });
-                    const settings = appData.settings;
-                    const connection = JSON.stringify([
-                        settings.codexGatewayUrl, settings.codexModel, settings.codexReasoningEffort,
-                        chapter.startPage, chapter.endPage, currentLang
-                    ]);
-                    let savedJob;
-                    try { savedJob = JSON.parse(mrLocalStorage.getItem(jobStorageKey) || 'null'); } catch (_) {}
+                    const { id, connection } = savedJob;
                     lectureJob = {
-                        id: savedJob?.connection === connection ? savedJob.id : undefined,
+                        id,
                         onCreated: id => {
                             mrLocalStorage.setItem(jobStorageKey, JSON.stringify({ id, connection }));
                             onProgress({ stage: 'generating' });
@@ -21017,6 +21035,8 @@ ${i18n('prompt_lecture_gen')}`;
             
             const book = appData.books.find(b => b.id === bookId);
             const chapter = lectureData.chapters[chapterIndex];
+            const resumeSavedJob = aiFeatureUsesCodex('lecture') &&
+                getLectureJobState(bookId, chapter).id;
             
             currentLecture = { bookId, chapterIndex, book, chapter };
             
@@ -21026,7 +21046,7 @@ ${i18n('prompt_lecture_gen')}`;
             saveData();
             
             // 预加载内容到缓存
-            if (chapter.status === 'ready' && !chapter._contentCache && chapter.id) {
+            if (!resumeSavedJob && chapter.status === 'ready' && !chapter._contentCache && chapter.id) {
                 try {
                     const cached = await getLectureContent(bookId, chapter.id);
                     if (cached) chapter._contentCache = cached;
@@ -21034,7 +21054,7 @@ ${i18n('prompt_lecture_gen')}`;
             }
             
             // 如果内容未生成，先生成
-            if (chapter.status !== 'ready' && chapter.status !== 'error') {
+            if (resumeSavedJob || (chapter.status !== 'ready' && chapter.status !== 'error')) {
                 generateChapterContent(bookId, chapterIndex);
             }
             
