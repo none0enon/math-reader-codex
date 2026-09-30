@@ -214,6 +214,10 @@ export function appServerArguments() {
     'app-server',
     '--stdio',
     '--strict-config',
+    // PDF requests can exhaust the deadline retrying broken WebSocket uploads.
+    // Use the existing HTTP/SSE transport from the first inference request.
+    '-c',
+    'model_providers.openai.supports_websockets=false',
     '--enable',
     'skip_host_skill_discovery',
     ...DISABLED_CODEX_FEATURES.flatMap((name) => ['--disable', name]),
