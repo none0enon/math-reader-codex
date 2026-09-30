@@ -7326,7 +7326,6 @@
             lecture_generation_reasoning:'Codex 正在分析章节内容…',
             lecture_generation_writing:'正在生成讲义正文…',
             lecture_generation_reconnecting:'连接暂时中断，正在重连…',
-            lecture_generation_retrying:'ChatGPT 输出流中断，Codex 正在自动重试（思考已保留，正文重新输出）…',
             lecture_generation_saving:'生成完成，正在保存讲义…',
             lecture_generation_elapsed:'已用时 {0}',
             lecture_generation_summary:'思路摘要',
@@ -7340,7 +7339,6 @@
             lecture_generation_reasoning:'Codex is analyzing the chapter…',
             lecture_generation_writing:'Writing lecture content…',
             lecture_generation_reconnecting:'Connection interrupted, reconnecting…',
-            lecture_generation_retrying:'ChatGPT stream interrupted; Codex is retrying automatically (reasoning kept, text being rewritten)…',
             lecture_generation_saving:'Generation complete, saving lecture…',
             lecture_generation_elapsed:'Elapsed: {0}',
             lecture_generation_summary:'Reasoning summary',
@@ -7354,7 +7352,6 @@
             lecture_generation_reasoning:'Codex analyse le chapitre…',
             lecture_generation_writing:'Rédaction du cours…',
             lecture_generation_reconnecting:'Connexion interrompue, reconnexion…',
-            lecture_generation_retrying:'Flux ChatGPT interrompu ; Codex réessaie automatiquement (raisonnement conservé, texte régénéré)…',
             lecture_generation_saving:'Génération terminée, enregistrement du cours…',
             lecture_generation_elapsed:'Temps écoulé : {0}',
             lecture_generation_summary:'Résumé du raisonnement',
@@ -20834,7 +20831,7 @@ ${i18n('prompt_outline_gen')}`;
             const container = document.getElementById('lectureViewerContent');
             const stage = container.querySelector('[data-generation-stage]');
             if (!stage) return;
-            const stages = ['queued', 'preparing', 'connecting', 'generating', 'reasoning', 'writing', 'reconnecting', 'retrying', 'saving'];
+            const stages = ['queued', 'preparing', 'connecting', 'generating', 'reasoning', 'writing', 'reconnecting', 'saving'];
             stage.textContent = i18n('lecture_generation_' + (stages.includes(progress.stage) ? progress.stage : 'generating'));
             const seconds = Math.max(0, Math.floor((Number(progress.elapsedMs) || 0) / 1000));
             container.querySelector('[data-generation-elapsed]').textContent = i18n('lecture_generation_elapsed',
@@ -20854,23 +20851,6 @@ ${i18n('prompt_outline_gen')}`;
                 previewBody.innerHTML = renderChatMarkdownLatex(progress.partialText || '');
                 renderLectureMath(previewBody);
             }
-        }
-
-        function lectureJobConnection(chapter) {
-            const settings = appData.settings;
-            return JSON.stringify([
-                settings.codexGatewayUrl, settings.codexModel, settings.codexReasoningEffort,
-                chapter.startPage, chapter.endPage, currentLang
-            ]);
-        }
-
-        // Transport failures keep the gateway job id. Only a job saved for the
-        // current gateway/model selection can be resumed without a new request.
-        function resumableLectureJob(bookId, chapter) {
-            if (!chapter?.id || !aiFeatureUsesCodex('lecture')) return null;
-            let savedJob;
-            try { savedJob = JSON.parse(mrLocalStorage.getItem('codexLectureJob:' + bookId + ':' + chapter.id) || 'null'); } catch (_) {}
-            return savedJob?.id && savedJob.connection === lectureJobConnection(chapter) ? savedJob : null;
         }
 
         async function generateChapterContent(bookId, chapterIndex) {
@@ -20914,9 +20894,15 @@ ${i18n('prompt_outline_gen')}`;
                 const lectureUsesCodex = aiFeatureUsesCodex('lecture');
                 if (lectureUsesCodex) {
                     onProgress({ stage: 'preparing', partialText: '', reasoningSummary: '', elapsedMs: 0 });
-                    const connection = lectureJobConnection(chapter);
+                    const settings = appData.settings;
+                    const connection = JSON.stringify([
+                        settings.codexGatewayUrl, settings.codexModel, settings.codexReasoningEffort,
+                        chapter.startPage, chapter.endPage, currentLang
+                    ]);
+                    let savedJob;
+                    try { savedJob = JSON.parse(mrLocalStorage.getItem(jobStorageKey) || 'null'); } catch (_) {}
                     lectureJob = {
-                        id: resumableLectureJob(bookId, chapter)?.id,
+                        id: savedJob?.connection === connection ? savedJob.id : undefined,
                         onCreated: id => {
                             mrLocalStorage.setItem(jobStorageKey, JSON.stringify({ id, connection }));
                             onProgress({ stage: 'generating' });
@@ -21050,8 +21036,8 @@ ${i18n('prompt_lecture_gen')}`;
                 } catch(e) {}
             }
             
-            // 如果内容未生成，先生成；网络中断导致的失败仍保留网关任务，重新打开即继续取回结果
-            if (chapter.status !== 'ready' && (chapter.status !== 'error' || resumableLectureJob(bookId, chapter))) {
+            // 如果内容未生成，先生成
+            if (chapter.status !== 'ready' && chapter.status !== 'error') {
                 generateChapterContent(bookId, chapterIndex);
             }
             
