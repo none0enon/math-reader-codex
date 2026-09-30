@@ -322,7 +322,8 @@
                 job = await requestJson(config, submitted ? '/v1/lecture-jobs/' + id : '/v1/lecture-jobs', {
                     fetchImpl: options.fetchImpl,
                     signal: options.signal,
-                    timeoutMs: 30 * 1000,
+                    // The submission uploads the chapter PDF; only status polls are short.
+                    timeoutMs: submitted ? 30 * 1000 : MAX_REQUEST_TIMEOUT_MS,
                     ...(submitted ? {} : { method: 'POST', body: { id, request: payload } })
                 });
                 submitted = true;

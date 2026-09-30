@@ -7433,8 +7433,10 @@
             await migrateAnnotationsToIDB();
             // 从 IndexedDB 恢复标注大数据、草稿画布、截图到内存
             await restoreBlobsFromIDB();
-            // 如果localStorage被iOS清理导致API设置丢失，从IndexedDB恢复
-            if (!appData.settings.aiApiKey && !appData.settings.aiApiUrl) {
+            // 如果localStorage被iOS清理导致API设置丢失，从IndexedDB恢复。
+            // 只配置了 Codex 也算已有设置，否则每次启动都会用旧备份覆盖当前设置。
+            if (!appData.settings.aiApiKey && !appData.settings.aiApiUrl &&
+                !appData.settings.codexGatewayUrl && !appData.settings.codexGatewayToken) {
                 const backup = await restoreApiSettingsFromIDB();
                 if (backup) {
                     Object.assign(appData.settings, backup);
