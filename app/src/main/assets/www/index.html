@@ -7316,6 +7316,45 @@
             codex_audio_requires_gemini:"Codex est activé, mais l’audio nécessite toujours Gemini dans les réglages de l’API principale ou de secours."
         });
         Object.assign(I18N.zh, {
+            lecture_generation_queued:'正在排队，等待前一个任务完成…',
+            lecture_generation_preparing:'正在准备章节资料…',
+            lecture_generation_connecting:'正在连接 Codex…',
+            lecture_generation_generating:'已提交，等待 Codex 输出…',
+            lecture_generation_reasoning:'Codex 正在分析章节内容…',
+            lecture_generation_writing:'正在生成讲义正文…',
+            lecture_generation_reconnecting:'连接暂时中断，正在重连…',
+            lecture_generation_saving:'生成完成，正在保存讲义…',
+            lecture_generation_elapsed:'已用时 {0}',
+            lecture_generation_summary:'思路摘要',
+            lecture_generation_preview:'正文预览（生成中，尚未保存）'
+        });
+        Object.assign(I18N.en, {
+            lecture_generation_queued:'Queued, waiting for the previous request…',
+            lecture_generation_preparing:'Preparing chapter material…',
+            lecture_generation_connecting:'Connecting to Codex…',
+            lecture_generation_generating:'Submitted, waiting for Codex output…',
+            lecture_generation_reasoning:'Codex is analyzing the chapter…',
+            lecture_generation_writing:'Writing lecture content…',
+            lecture_generation_reconnecting:'Connection interrupted, reconnecting…',
+            lecture_generation_saving:'Generation complete, saving lecture…',
+            lecture_generation_elapsed:'Elapsed: {0}',
+            lecture_generation_summary:'Reasoning summary',
+            lecture_generation_preview:'Content preview (generating, not yet saved)'
+        });
+        Object.assign(I18N.fr, {
+            lecture_generation_queued:'En attente de la requête précédente…',
+            lecture_generation_preparing:'Préparation des documents du chapitre…',
+            lecture_generation_connecting:'Connexion à Codex…',
+            lecture_generation_generating:'Requête envoyée, en attente de Codex…',
+            lecture_generation_reasoning:'Codex analyse le chapitre…',
+            lecture_generation_writing:'Rédaction du cours…',
+            lecture_generation_reconnecting:'Connexion interrompue, reconnexion…',
+            lecture_generation_saving:'Génération terminée, enregistrement du cours…',
+            lecture_generation_elapsed:'Temps écoulé : {0}',
+            lecture_generation_summary:'Résumé du raisonnement',
+            lecture_generation_preview:'Aperçu (génération en cours, non enregistré)'
+        });
+        Object.assign(I18N.zh, {
             ai_route_settings:'API 配置',
             ai_route_note:'为每个 AI 功能选择调用的 API。配置仅保存在本机，不参与云同步；导出/导入 ZIP 时一并包含。',
             ai_route_codex:'Codex 网关', ai_route_primary:'主 API', ai_route_backup:'副 API',
@@ -20777,6 +20816,40 @@ ${i18n('prompt_outline_gen')}`;
 
         const activeLectureChapters = new Set();
 
+        // Transient previews must never enter IndexedDB, backups, or R2 metadata.
+        const lectureGenerationProgress = new Map();
+
+        function updateLectureGenerationProgress() {
+            if (!currentLecture || currentLecture.isClassroomNote || currentLecture.isPaperAbstract) return;
+            const chapter = appData.lectures?.[currentLecture.bookId]?.chapters?.[currentLecture.chapterIndex];
+            if (chapter?.status !== 'generating') return;
+            const progress = lectureGenerationProgress.get('codexLectureJob:' + currentLecture.bookId + ':' + chapter.id);
+            if (!progress) return;
+            const container = document.getElementById('lectureViewerContent');
+            const stage = container.querySelector('[data-generation-stage]');
+            if (!stage) return;
+            const stages = ['queued', 'preparing', 'connecting', 'generating', 'reasoning', 'writing', 'reconnecting', 'saving'];
+            stage.textContent = i18n('lecture_generation_' + (stages.includes(progress.stage) ? progress.stage : 'generating'));
+            const seconds = Math.max(0, Math.floor((Number(progress.elapsedMs) || 0) / 1000));
+            container.querySelector('[data-generation-elapsed]').textContent = i18n('lecture_generation_elapsed',
+                Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0'));
+            const summary = container.querySelector('[data-generation-summary]');
+            summary.hidden = !progress.reasoningSummary;
+            const summaryBody = summary.querySelector('.lecture-body');
+            if (summaryBody._previewText !== progress.reasoningSummary) {
+                summaryBody._previewText = progress.reasoningSummary;
+                summaryBody.innerHTML = renderChatMarkdownLatex(progress.reasoningSummary || '');
+            }
+            const preview = container.querySelector('[data-generation-preview]');
+            preview.hidden = !progress.partialText;
+            const previewBody = preview.querySelector('.lecture-body');
+            if (previewBody._previewText !== progress.partialText) {
+                previewBody._previewText = progress.partialText;
+                previewBody.innerHTML = renderChatMarkdownLatex(progress.partialText || '');
+                renderLectureMath(previewBody);
+            }
+        }
+
         async function generateChapterContent(bookId, chapterIndex) {
             const book = appData.books.find(b => b.id === bookId);
             let lectureData = appData.lectures?.[bookId];
@@ -20794,6 +20867,13 @@ ${i18n('prompt_outline_gen')}`;
                 chapter = lectureData?.chapters?.find(item => item.id === chapterId);
                 return !!chapter;
             };
+            const onProgress = progress => {
+                if (!refreshChapter() || chapter.status !== 'generating') return;
+                lectureGenerationProgress.set(jobStorageKey, {
+                    ...lectureGenerationProgress.get(jobStorageKey), ...progress
+                });
+                updateLectureGenerationProgress();
+            };
 
             chapter.status = 'generating';
             delete chapter.generationError;
@@ -20810,6 +20890,7 @@ ${i18n('prompt_outline_gen')}`;
                 let lectureJob;
                 const lectureUsesCodex = aiFeatureUsesCodex('lecture');
                 if (lectureUsesCodex) {
+                    onProgress({ stage: 'preparing', partialText: '', reasoningSummary: '', elapsedMs: 0 });
                     const settings = appData.settings;
                     const connection = JSON.stringify([
                         settings.codexGatewayUrl, settings.codexModel, settings.codexReasoningEffort,
@@ -20819,7 +20900,11 @@ ${i18n('prompt_outline_gen')}`;
                     try { savedJob = JSON.parse(mrLocalStorage.getItem(jobStorageKey) || 'null'); } catch (_) {}
                     lectureJob = {
                         id: savedJob?.connection === connection ? savedJob.id : undefined,
-                        onCreated: id => mrLocalStorage.setItem(jobStorageKey, JSON.stringify({ id, connection }))
+                        onCreated: id => {
+                            mrLocalStorage.setItem(jobStorageKey, JSON.stringify({ id, connection }));
+                            onProgress({ stage: 'generating' });
+                        },
+                        onProgress
                     };
                 }
                 const systemPrompt = i18n('prompt_lecture_sys');
@@ -20855,6 +20940,7 @@ ${i18n('prompt_lecture_gen')}`;
                 const generatedAt = new Date().toISOString();
                 // Commit the content before marking the chapter ready. A failed
                 // IndexedDB write must leave the completed gateway job resumable.
+                if (lectureUsesCodex) onProgress({ stage: 'saving' });
                 await saveLectureContent(bookId, chapter.id, contentText, generatedAt);
                 if (!refreshChapter()) return;
                 chapter.status = 'ready';
@@ -20900,6 +20986,7 @@ ${i18n('prompt_lecture_gen')}`;
                 renderNotesPage();
             } finally {
                 activeLectureChapters.delete(jobStorageKey);
+                lectureGenerationProgress.delete(jobStorageKey);
                 activeLectureGenerationCount = Math.max(0, activeLectureGenerationCount - 1);
                 if (activeLectureGenerationCount === 0 && !r2SyncInProgress && r2PendingSyncQueue.length > 0) {
                     const lectureUploadIndex = r2PendingSyncQueue.findIndex(item =>
@@ -20983,9 +21070,18 @@ ${i18n('prompt_lecture_gen')}`;
                 container.innerHTML = `
                     <div class="generating-indicator">
                         <div class="generating-spinner"></div>
-                        <span>${i18n('generating_lecture_content')}</span>
+                        <span data-generation-stage role="status">${i18n('generating_lecture_content')}</span>
                     </div>
-                    <p style="color:var(--text-muted);text-align:center;">${i18n('first_generation_time')}</p>`;
+                    <p data-generation-elapsed style="color:var(--text-muted);text-align:center;">${i18n('first_generation_time')}</p>
+                    <details data-generation-summary open hidden>
+                        <summary>${i18n('lecture_generation_summary')}</summary>
+                        <div class="lecture-body"></div>
+                    </details>
+                    <div data-generation-preview hidden>
+                        <p>${i18n('lecture_generation_preview')}</p>
+                        <div class="lecture-body"></div>
+                    </div>`;
+                updateLectureGenerationProgress();
                 return;
             }
 
@@ -21220,6 +21316,8 @@ ${i18n('prompt_lecture_gen')}`;
             if (currentLecture.isClassroomNote) { updateClassroomNoteProgress(); return; }
             if (currentLecture.isPaperAbstract) return;
             if (!currentLecture.bookId || !appData.lectures[currentLecture.bookId]) return;
+            // Reading a partial preview must not mark the saved lecture as read.
+            if (appData.lectures[currentLecture.bookId].chapters[currentLecture.chapterIndex]?.status !== 'ready') return;
             const container = document.getElementById('lectureViewerContent');
             const scrollHeight = container.scrollHeight - container.clientHeight;
             const progress = scrollHeight > 0 ? Math.round((container.scrollTop / scrollHeight) * 100) : 100;

@@ -114,7 +114,9 @@ All `/v1/` endpoints require `Authorization: Bearer <gateway-access-token>`.
 - `GET /v1/models`: the available model IDs and supported reasoning effort options.
 - `POST /v1/ask`: one mathematics request, returning `{ "text": "..." }`.
 - `POST /v1/lecture-jobs`: submit `{ "id": "<client UUID>", "request": <ask request> }`; retrying the same id and input reuses the existing job.
-- `GET /v1/lecture-jobs/<id>`: retrieve `pending`, `completed` (with `text`), or `failed` (with `error`). These endpoints require the same bearer token.
+- `GET /v1/lecture-jobs/<id>`: retrieve `pending` (with `progress`), `completed` (with `text`), or `failed` (with `error`). These endpoints require the same bearer token.
+
+While pending, `progress` includes `stage`, `elapsedMs` (including queue time), `partialText` (up to the first 120,000 characters), and `reasoningSummary` (up to the latest 12,000 characters). Chapter pages refresh this snapshot about every two seconds, showing actual preparation/generation stages, a collapsible reasoning summary when the model provides one, and a growing content preview. This uses the existing resumable job polling rather than a persistent HTTP stream. Only readable summary events are exposed, never raw reasoning. Previews stay in memory and are not saved or synced as completed lectures; final completion remains authoritative. Older gateways without progress still work, but must be updated and restarted to provide live previews.
 
 Chapter lectures use these background jobs so a disconnected browser does not cancel inference. The page saves only the job id and connection/model selection in its local storage, then resumes polling when that chapter is reopened. Each job has a 30-minute deadline including queue time; completed results remain in memory for another 30 minutes. Restarting the gateway loses its jobs, and the page resubmits missing jobs. Update and restart the gateway before using the new frontend; other AI requests retain `/v1/ask` behavior.
 

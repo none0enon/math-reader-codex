@@ -27,7 +27,15 @@ export class LectureJobs {
     this.prune();
     const job = this.jobs.get(id);
     if (!job) throw new GatewayError('job_not_found', 'The lecture job expired or the gateway restarted.', 404);
-    return { id, status: job.status, ...(job.result || {}), ...(job.error ? { error: job.error } : {}) };
+    return {
+      id,
+      status: job.status,
+      ...(job.status === 'pending' ? {
+        progress: { ...job.progress, elapsedMs: Date.now() - job.createdAt },
+      } : {}),
+      ...(job.result || {}),
+      ...(job.error ? { error: job.error } : {}),
+    };
   }
 
   create(body) {
@@ -49,7 +57,10 @@ export class LectureJobs {
       throw new GatewayError('queue_full', 'The private Codex gateway lecture queue is full.', 503);
     }
     const controller = new AbortController();
-    const job = { status: 'pending', fingerprint, finishedAt: null };
+    const job = {
+      status: 'pending', fingerprint, finishedAt: null, createdAt: Date.now(),
+      progress: { stage: 'queued', partialText: '', reasoningSummary: '' },
+    };
     this.jobs.set(body.id, job);
     const timer = setTimeout(() => controller.abort(
       new GatewayError('request_timeout', 'Lecture generation exceeded 30 minutes; use a smaller section or lower reasoning effort.', 504),
@@ -57,7 +68,10 @@ export class LectureJobs {
     timer.unref?.();
     // Validation above is synchronous. The remaining work is deliberately not
     // awaited by the HTTP handler, including time spent in the inference queue.
-    Promise.resolve().then(() => this.engine.ask(body.request, { signal: controller.signal }))
+    Promise.resolve().then(() => this.engine.ask(body.request, {
+      signal: controller.signal,
+      onProgress: progress => { job.progress = progress; },
+    }))
       .then(result => {
         job.result = result;
         job.status = 'completed';
@@ -68,6 +82,7 @@ export class LectureJobs {
       })
       .finally(() => {
         clearTimeout(timer);
+        delete job.progress;
         job.finishedAt = Date.now();
       });
     return this.read(body.id);
