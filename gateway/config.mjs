@@ -59,6 +59,16 @@ cli_auth_credentials_store = "file"
 sandbox_mode = "read-only"
 approval_policy = "never"
 web_search = "disabled"
+model_provider = "math_reader_http"
+
+# Use HTTP/SSE immediately instead of retrying failed PDF WebSocket uploads.
+# Built-in provider IDs are reserved; keep the same ChatGPT endpoint and login.
+[model_providers.math_reader_http]
+name = "OpenAI"
+base_url = "https://chatgpt.com/backend-api/codex"
+wire_api = "responses"
+requires_openai_auth = true
+supports_websockets = false
 
 [analytics]
 enabled = false
@@ -214,10 +224,6 @@ export function appServerArguments() {
     'app-server',
     '--stdio',
     '--strict-config',
-    // PDF requests can exhaust the deadline retrying broken WebSocket uploads.
-    // Use the existing HTTP/SSE transport from the first inference request.
-    '-c',
-    'model_providers.openai.supports_websockets=false',
     '--enable',
     'skip_host_skill_discovery',
     ...DISABLED_CODEX_FEATURES.flatMap((name) => ['--disable', name]),
