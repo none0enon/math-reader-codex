@@ -14126,7 +14126,52 @@
         let r2LastSyncTime = null;
         let r2SyncInProgress = false;
         let r2PendingSyncQueue = []; // 排队等待的文件变更同步任务队列
-        let activeLectureGenerationCount = 0;
+        // 只在讲义结果写入本地并排队上传正文的短暂窗口内暂停自动同步；
+        // 等待网关生成（可能远超 15 分钟）期间同步照常进行。
+        let activeLectureCommitCount = 0;
+        // 本页正在生成的讲义章节（lectureJobKey）。同步合并时保留它们的本地状态，
+        // 发布时让云端保持原样，直到 lecture_upload 连同正文发布最终结果。
+        const activeLectureChapters = new Set();
+
+        function lectureJobKey(bookId, chapterId) {
+            return 'codexLectureJob:' + bookId + ':' + chapterId;
+        }
+
+        function isLectureChapterGenerating(bookId, chapterId) {
+            return activeLectureChapters.has(lectureJobKey(bookId, chapterId));
+        }
+
+        // 生成中的 generating/pending 只是本页的临时状态：发布出去会让其它设备以为
+        // 需要（重新）生成，或丢掉它们手里的旧版正文。云端已有的章节保持云端原样，
+        // 云端还没有的新章节按"待生成"发布，避免其它设备把整章判为已删除。
+        function holdInFlightLectureChapters(lectures, remoteLectures) {
+            if (!lectures || !activeLectureChapters.size) return lectures;
+            const result = { ...lectures };
+            for (const [bookId, lecture] of Object.entries(lectures)) {
+                if (!Array.isArray(lecture?.chapters) ||
+                    !lecture.chapters.some(ch => ch?.id && isLectureChapterGenerating(bookId, ch.id))) continue;
+                const remoteById = new Map((remoteLectures?.[bookId]?.chapters || [])
+                    .filter(ch => ch?.id).map(ch => [ch.id, ch]));
+                result[bookId] = {
+                    ...lecture,
+                    chapters: lecture.chapters.map(ch => {
+                        if (!ch?.id || !isLectureChapterGenerating(bookId, ch.id)) return ch;
+                        const remote = remoteById.get(ch.id);
+                        if (remote) return remote;
+                        const { generationError, ...rest } = ch;
+                        return { ...rest, status: 'pending' };
+                    })
+                };
+            }
+            return result;
+        }
+
+        async function waitForR2SyncIdle(timeoutMs) {
+            const deadline = Date.now() + timeoutMs;
+            while (r2SyncInProgress && Date.now() < deadline) {
+                await new Promise(resolve => setTimeout(resolve, 250));
+            }
+        }
         const r2ClassroomRetryTimers = new Map();
         let r2StartupMetadataReady = Promise.resolve();
         let _resolveR2StartupMetadataReady = null;
@@ -14391,8 +14436,8 @@
                 console.warn('[sync] 数据未加载完成，跳过定时同步');
                 return;
             }
-            if (activeLectureGenerationCount > 0) {
-                console.log('[sync] 讲义仍在生成，延后定时同步');
+            if (activeLectureCommitCount > 0) {
+                console.log('[sync] 讲义正在保存，延后定时同步');
                 return;
             }
             const config = appData.settings.r2Config;
@@ -14858,7 +14903,7 @@
             const cloud = cloudLectures || {};
             const local = localLectures || {};
             const baseline = Number(cloudSyncedAtMs) || 0;
-            const mergeChapters = (cloudChapters, localChapters) => {
+            const mergeChapters = (cloudChapters, localChapters, bookId) => {
                 const localById = new Map((localChapters || [])
                     .filter(chapter => chapter?.id)
                     .map(chapter => [chapter.id, chapter]));
@@ -14886,12 +14931,21 @@
                     const maxProgress = Math.max(Number(localChapter.maxProgress) || 0,
                         Number(cloudChapter.maxProgress) || 0);
                     if (maxProgress > 0) result.maxProgress = maxProgress;
+                    // 本页仍在生成的章节保留本地 generating：云端副本只记得生成开始前的状态。
+                    // 只有云端已是较新的 ready（另一台设备已生成）时才接受云端。
+                    if (localChapter.status === 'generating' && result.status !== 'ready' &&
+                        isLectureChapterGenerating(bookId, cloudChapter.id)) {
+                        result.status = 'generating';
+                        delete result.generationError;
+                    }
                     return result;
                 });
                 for (const localChapter of (localChapters || [])) {
                     if (!localChapter?.id || cloudIds.has(localChapter.id)) continue;
+                    // 本页正在生成的本地新章节还没来得及发布，不能按"云端已删除"丢掉。
                     if (!(cloudChapters || []).length ||
-                        lectureStructureTimestamp(localChapter) > baseline) {
+                        lectureStructureTimestamp(localChapter) > baseline ||
+                        isLectureChapterGenerating(bookId, localChapter.id)) {
                         merged.push(localChapter);
                     }
                 }
@@ -14911,13 +14965,15 @@
                     ...(lectureStructureTimestamp(localLecture) > lectureStructureTimestamp(cloudLecture)
                         ? localLecture : cloudLecture)
                 };
-                result.chapters = mergeChapters(cloudLecture?.chapters, localLecture?.chapters);
+                result.chapters = mergeChapters(cloudLecture?.chapters, localLecture?.chapters, bookId);
                 merged[bookId] = result;
             }
             for (const bookId of Object.keys(local)) {
                 if (Object.prototype.hasOwnProperty.call(cloud, bookId)) continue;
                 if (!Object.keys(cloud).length ||
-                    lectureBookStructureTimestamp(local[bookId]) > baseline) {
+                    lectureBookStructureTimestamp(local[bookId]) > baseline ||
+                    (local[bookId]?.chapters || []).some(chapter =>
+                        chapter?.id && isLectureChapterGenerating(bookId, chapter.id))) {
                     merged[bookId] = local[bookId];
                 }
             }
@@ -15073,11 +15129,11 @@
                 }
                 const candidate = {
                     ...candidateBase,
-                    lectures: mergeLecturesData(
+                    lectures: holdInFlightLectureChapters(mergeLecturesData(
                         remoteMetadata?.lectures,
                         candidateBase?.lectures,
                         remoteBaseline
-                    ),
+                    ), remoteMetadata?.lectures),
                     notebooks: mergedNotebooks,
                     classroom: stripClassroomData(mergedIntent, true),
                     classroomTombstones: tombstones,
@@ -15677,7 +15733,7 @@
                 return;
             }
 
-            if (activeLectureGenerationCount > 0) {
+            if (activeLectureCommitCount > 0) {
                 const pending = r2PendingSyncQueue.find(t => t.fileId === fileId && t.action === action);
                 if (pending) {
                     pending.successToasts = Array.from(new Set([...(pending.successToasts || [showToast]), ...successToasts]));
@@ -20820,8 +20876,6 @@ ${i18n('prompt_outline_gen')}`;
             }
         }
 
-        const activeLectureChapters = new Set();
-
         // Transient previews must never enter IndexedDB, backups, or R2 metadata.
         const lectureGenerationProgress = new Map();
 
@@ -20881,7 +20935,7 @@ ${i18n('prompt_outline_gen')}`;
             let chapter = lectureData.chapters[chapterIndex];
             if (chapter.status === 'ready') return; // 已生成
             const chapterId = chapter.id;
-            const jobStorageKey = 'codexLectureJob:' + bookId + ':' + chapterId;
+            const jobStorageKey = lectureJobKey(bookId, chapterId);
             // A saved 'generating' flag does not mean a request survived reload.
             // Only a live call in this page prevents resuming the saved job.
             if (activeLectureChapters.has(jobStorageKey)) return;
@@ -20908,7 +20962,7 @@ ${i18n('prompt_outline_gen')}`;
             }
 
             activeLectureChapters.add(jobStorageKey);
-            activeLectureGenerationCount++;
+            let committing = false;
             try {
                 let lectureJob;
                 const lectureUsesCodex = aiFeatureUsesCodex('lecture');
@@ -20958,6 +21012,12 @@ ${i18n('prompt_lecture_gen')}`;
                 // Commit the content before marking the chapter ready. A failed
                 // IndexedDB write must leave the completed gateway job resumable.
                 if (lectureUsesCodex) onProgress({ stage: 'saving' });
+                // 从这里起暂停新的自动同步，并等正在进行的同步结束（最多 2 分钟），
+                // 保证 ready 状态不会先于正文发布；lecture_upload 在 finally 中优先执行。
+                activeLectureCommitCount++;
+                committing = true;
+                await waitForR2SyncIdle(2 * 60 * 1000);
+                if (!refreshChapter()) return;
                 await saveLectureContent(bookId, chapter.id, contentText, generatedAt);
                 if (!refreshChapter()) return;
                 chapter.status = 'ready';
@@ -21004,8 +21064,8 @@ ${i18n('prompt_lecture_gen')}`;
             } finally {
                 activeLectureChapters.delete(jobStorageKey);
                 lectureGenerationProgress.delete(jobStorageKey);
-                activeLectureGenerationCount = Math.max(0, activeLectureGenerationCount - 1);
-                if (activeLectureGenerationCount === 0 && !r2SyncInProgress && r2PendingSyncQueue.length > 0) {
+                if (committing) activeLectureCommitCount = Math.max(0, activeLectureCommitCount - 1);
+                if (activeLectureCommitCount === 0 && !r2SyncInProgress && r2PendingSyncQueue.length > 0) {
                     const lectureUploadIndex = r2PendingSyncQueue.findIndex(item =>
                         item.action === 'lecture_upload');
                     const pending = lectureUploadIndex >= 0
