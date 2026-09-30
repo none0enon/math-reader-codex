@@ -8,7 +8,6 @@ import { preparePdfAttachment } from './pdf.mjs';
 import { BoundedQueue } from './queue.mjs';
 import {
   buildCodexInput,
-  buildDeveloperInstructions,
   validateAskBody,
 } from './request.mjs';
 
@@ -316,7 +315,7 @@ export class GatewayEngine {
           approvalPolicy: 'never',
           personality: 'none',
           serviceName: 'math-reader-codex',
-          developerInstructions: buildDeveloperInstructions(request.systemPrompt),
+          developerInstructions: request.systemPrompt,
           config: { web_search: 'disabled', features },
         },
         {
