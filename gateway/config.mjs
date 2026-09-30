@@ -61,14 +61,15 @@ approval_policy = "never"
 web_search = "disabled"
 model_provider = "math_reader_http"
 
-# Use HTTP/SSE immediately instead of retrying failed PDF WebSocket uploads.
+# Keep long lecture responses on WebSocket. Large images are uploaded separately
+# before starting the single model turn, avoiding oversized WebSocket messages.
 # Built-in provider IDs are reserved; keep the same ChatGPT endpoint and login.
 [model_providers.math_reader_http]
 name = "OpenAI"
 base_url = "https://chatgpt.com/backend-api/codex"
 wire_api = "responses"
 requires_openai_auth = true
-supports_websockets = false
+supports_websockets = true
 
 [analytics]
 enabled = false
@@ -120,6 +121,13 @@ export function loadConfig(env = process.env) {
     requestTimeoutMs: integer(env.MATH_READER_GATEWAY_TIMEOUT_MS, 600_000, {
       min: 1_000,
       max: 3_600_000,
+    }),
+    // Generation time for one lecture job, counted from when it leaves the
+    // queue. ChatGPT was observed to end a single HTTP response stream after
+    // about 15 minutes; Codex then retries, so a long lecture can need far more.
+    lectureTimeoutMs: integer(env.MATH_READER_GATEWAY_LECTURE_TIMEOUT_MS, 3_600_000, {
+      min: 60_000,
+      max: 14_400_000,
     }),
     maxQueueDepth: integer(env.MATH_READER_GATEWAY_MAX_QUEUE, 8, { min: 0, max: 100 }),
     maxBodyBytes: integer(env.MATH_READER_GATEWAY_MAX_BODY_BYTES, 96 * 1024 * 1024, {

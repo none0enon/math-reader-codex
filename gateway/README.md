@@ -19,7 +19,7 @@ Codex model computation still runs through OpenAI's services and consumes the su
 ## Requirements
 
 - Node.js 22.13 or newer, with npm.
-- The pinned official `@openai/codex@0.155.1` CLI installed by `npm ci` below.
+- The pinned official `@openai/codex@0.159.2` CLI installed by `npm ci` below.
 - A ChatGPT account with Codex access. No OpenAI Platform API key is used.
 - A private HTTPS route from the BOOX/PWA to the gateway host.
 
@@ -51,6 +51,7 @@ By default, `start` listens on `http://127.0.0.1:4747`. Keep it running while us
 | `MATH_READER_GATEWAY_ALLOWED_ORIGINS` | Additional exact browser origins, separated by commas |
 | `MATH_READER_GATEWAY_TLS_CERT` / `MATH_READER_GATEWAY_TLS_KEY` | Certificate and private-key paths for native HTTPS |
 | `MATH_READER_GATEWAY_TIMEOUT_MS` | Overall request timeout; default 600000 ms |
+| `MATH_READER_GATEWAY_LECTURE_TIMEOUT_MS` | Generation time for one chapter lecture job, counted after it leaves the queue; default 3600000 ms |
 
 By default, the gateway uses its pinned CLI dependency. Do not substitute a desktop-bundled binary merely because it is newer: tool exposure can differ even when the same feature flags are supplied. A CLI override must pass the security/protocol tests and real account checks before use.
 
@@ -92,6 +93,8 @@ A feature routed to Codex shows a Codex failure to the user; it does not silentl
 
 PDFs are parsed in a disposable worker. The gateway supplies every page as an image together with the text layer, retaining formulas, handwriting, diagrams and scanned pages. Client filenames never select filesystem paths. Temporary inputs and rendered pages live in a request-specific directory and are removed after completion, failure or cancellation.
 
+Long responses use WebSocket. When the combined inline image encoding exceeds 1 MB, the gateway uploads the original images through Codex's ChatGPT file service and includes all file references in the same model turn. This avoids oversized WebSocket messages without splitting lecture generation or reducing image quality. The pinned CLI version supports these file references. Upstream retries are shown as a retry stage (see lecture jobs below).
+
 A request accepts up to 64 MiB of PDF bytes, 48 pages, and 400,000 extracted text characters. Larger documents return an explicit `context_length_exceeded` error; they are never silently truncated. The existing outline generator recognizes this error and retries in smaller page ranges, including recursive splitting. A document with an unreadable password or broken rendering fails with an actionable error.
 
 The 48-page limit applies to each request, not to an entire book. Outline generation can split automatically; other calls such as an unusually long single chapter or paper currently require a smaller page range/document. Image limits and model context limits may be reached earlier.
@@ -118,7 +121,9 @@ All `/v1/` endpoints require `Authorization: Bearer <gateway-access-token>`.
 
 While pending, `progress` includes `stage`, `elapsedMs` (including queue time), `partialText` (up to the first 120,000 characters), and `reasoningSummary` (up to the latest 12,000 characters). Chapter pages refresh this snapshot about every two seconds, showing actual preparation/generation stages, a collapsible reasoning summary when the model provides one, and a growing content preview. This uses the existing resumable job polling rather than a persistent HTTP stream. Only readable summary events are exposed, never raw reasoning. Previews stay in memory and are not saved or synced as completed lectures; final completion remains authoritative. Older gateways without progress still work, but must be updated and restarted to provide live previews.
 
-Chapter lectures use these background jobs so a disconnected browser does not cancel inference. The page saves only the job id and connection/model selection in its local storage, then resumes polling when that chapter is reopened. Each job has a 30-minute deadline including queue time; completed results remain in memory for another 30 minutes. Restarting the gateway loses its jobs, and the page resubmits missing jobs. Update and restart the gateway before using the new frontend; other AI requests retain `/v1/ask` behavior.
+Chapter lectures use these background jobs so a disconnected browser does not cancel inference. The page saves only the job id and connection/model selection in its local storage, then resumes polling when that chapter is reopened. Each job has a 60-minute generation deadline (`MATH_READER_GATEWAY_LECTURE_TIMEOUT_MS`) that starts when it leaves the queue, so a chapter waiting behind another lecture keeps its full time; completed results remain in memory for another 30 minutes. The page keeps polling while the gateway reports the job as pending and tolerates about two minutes of lost connectivity before asking you to reopen the chapter; reopening a chapter whose wait was interrupted resumes the same job. Restarting the gateway loses its jobs, and the page resubmits missing jobs. Update and restart the gateway before using the new frontend; other AI requests retain `/v1/ask` behavior.
+
+Over HTTP/SSE, ChatGPT was observed to end a single model response stream after about 15 minutes; lectures with high or maximum reasoning effort can exceed this. WebSocket avoids that observed path, but generation longer than 15 minutes over WebSocket is not yet validated. Whenever a response stream ends early, Codex retries automatically: completed reasoning is kept, but the unfinished lecture text is written again from its beginning. The chapter page shows this as a retry stage and keeps the longest earlier preview until the new attempt overtakes it; only the completed answer is saved. If every retry is cut off, the job fails with `codex_stream_disconnected`; use a smaller page range or lower reasoning effort.
 
 The request accepts `systemPrompt`, `messages`, optional `model` and `reasoningEffort`, and optional `pdfAttachment: { base64, name }`. Message content is a string or an array of `text` and inline `image_url` blocks. Audio is not accepted by this endpoint. Errors have the form `{ "error": { "code": "...", "message": "..." } }`.
 

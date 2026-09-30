@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { publicAuth, requireChatgptAccount } from './app-server.mjs';
 import { DISABLED_CODEX_FEATURES } from './config.mjs';
 import { GatewayError, abortError } from './errors.mjs';
+import { prepareImageUploads } from './image-uploads.mjs';
 import { LECTURE_QUALITY_INSTRUCTIONS } from './lecture-instructions.mjs';
 import { preparePdfAttachment } from './pdf.mjs';
 import { BoundedQueue } from './queue.mjs';
@@ -69,6 +70,15 @@ function turnFailure(turn) {
       );
     case 'badRequest':
       return new GatewayError('codex_bad_request', error?.message || 'Codex rejected the input.', 400);
+    case 'responseStreamDisconnected':
+    case 'responseTooManyFailedAttempts':
+      // Codex retried after upstream ended the response stream early (HTTP
+      // streams were observed to end after about 15 minutes) and gave up.
+      return new GatewayError(
+        'codex_stream_disconnected',
+        'ChatGPT repeatedly ended the response stream before Codex finished (HTTP streams were observed to end after about 15 minutes). Use a smaller page range or lower reasoning effort.',
+        502,
+      );
     default:
       return new GatewayError('codex_turn_failed', error?.message || 'Codex failed the turn.', 502);
   }
@@ -90,6 +100,7 @@ export class GatewayEngine {
     this.config = config;
     this.appServer = appServer;
     this.preparePdf = options.preparePdf || preparePdfAttachment;
+    this.prepareImages = options.prepareImages || prepareImageUploads;
     this.queue = new BoundedQueue({ maxPending: config.maxQueueDepth });
   }
 
@@ -132,9 +143,12 @@ export class GatewayEngine {
     return { data: catalog.filter((model) => !model.hidden).map(publicModel) };
   }
 
-  ask(body, { signal, onProgress } = {}) {
+  ask(body, { signal, onProgress, onStart } = {}) {
     const request = validateAskBody(body);
-    return this.queue.run(() => this.#execute(request, signal, onProgress), { signal });
+    return this.queue.run(() => {
+      onStart?.();
+      return this.#execute(request, signal, onProgress);
+    }, { signal });
   }
 
   async #chooseModel(request, signal) {
@@ -181,6 +195,38 @@ export class GatewayEngine {
     let reasoningId;
     let summaryIndex;
     const messagePhases = new Map();
+    // When ChatGPT ends the response stream early (HTTP streams were observed
+    // to end after about 15 minutes), Codex retries the sampling request:
+    // completed reasoning is kept, but the unfinished answer is written again
+    // from its beginning. Keep showing the longest earlier preview until the
+    // new attempt overtakes it.
+    let liveText = '';
+    let retainedText = '';
+    let retries = 0;
+    const stageFor = (stage) => (retainedText ? 'retrying' : stage);
+    const reportText = (text) => {
+      liveText = text.slice(0, 120_000);
+      if (retainedText && liveText.length < retainedText.length) {
+        report({ stage: 'retrying', partialText: retainedText });
+        return;
+      }
+      retainedText = '';
+      report({ stage: 'writing', partialText: liveText });
+    };
+    const completedMessages = new Set();
+    const beginRetry = () => {
+      retries += 1;
+      if (liveText.length > retainedText.length) retainedText = liveText;
+      liveText = '';
+      messageId = undefined;
+      if (onProgress) report({ stage: 'retrying', retries });
+    };
+    // Codex hides the first WebSocket retry notification, so a new answer
+    // replacing an unfinished one also marks a retry.
+    const enterMessage = (id) => {
+      if (messageId && messageId !== id && !completedMessages.has(messageId) && liveText) beginRetry();
+      messageId = id;
+    };
     const account = await this.appServer.readAccount({ signal, refreshToken: true });
     requireChatgptAccount(account);
     const selectedModel = await this.#chooseModel(request, signal);
@@ -231,6 +277,10 @@ export class GatewayEngine {
       const params = notification.params;
       if (!threadId || params?.threadId !== threadId) return;
       if (turnId && params.turnId && params.turnId !== turnId) return;
+      if (notification.method === 'error' && params?.willRetry === true) {
+        // The unfinished message is discarded; the retry streams a new item.
+        beginRetry();
+      }
       if (notification.method === 'item/completed' || notification.method === 'item/started') {
         const item = params?.item;
         if (FORBIDDEN_ITEM_TYPES.has(item?.type)) {
@@ -250,24 +300,29 @@ export class GatewayEngine {
         if (onProgress && item?.type === 'agentMessage') {
           messagePhases.set(item.id, item.phase);
           if (item.phase !== 'commentary') {
-            messageId = item.id;
-            report({ stage: 'writing', partialText: String(item.text || '').slice(0, 120_000) });
+            enterMessage(item.id);
+            if (notification.method === 'item/completed') {
+              completedMessages.add(item.id);
+              // A completed attempt is authoritative even if it is shorter.
+              retainedText = '';
+            }
+            reportText(String(item.text || ''));
           }
         }
         if (onProgress && item?.type === 'reasoning') {
           reasoningId = item.id;
           summaryIndex = undefined;
           report({
-            stage: 'reasoning',
+            stage: stageFor('reasoning'),
             reasoningSummary: (item.summary || []).filter(part => typeof part === 'string').join('\n\n').slice(-12_000),
           });
         }
       }
       if (onProgress && notification.method === 'item/agentMessage/delta'
           && typeof params.delta === 'string' && messagePhases.get(params.itemId) !== 'commentary') {
-        const previous = messageId === params.itemId ? progress.partialText : '';
-        messageId = params.itemId;
-        report({ stage: 'writing', partialText: (previous + params.delta).slice(0, 120_000) });
+        const previous = messageId === params.itemId ? liveText : '';
+        enterMessage(params.itemId);
+        reportText(previous + params.delta);
       }
       if (onProgress && notification.method === 'item/reasoning/summaryTextDelta'
           && typeof params.delta === 'string') {
@@ -275,7 +330,7 @@ export class GatewayEngine {
         const separator = previous && summaryIndex !== params.summaryIndex ? '\n\n' : '';
         reasoningId = params.itemId;
         summaryIndex = params.summaryIndex;
-        report({ stage: 'reasoning', reasoningSummary: (previous + separator + params.delta).slice(-12_000) });
+        report({ stage: stageFor('reasoning'), reasoningSummary: (previous + separator + params.delta).slice(-12_000) });
       }
       if (notification.method === 'turn/completed' && (!turnId || params?.turn?.id === turnId)) {
         resolveCompletion(params.turn);
@@ -302,7 +357,9 @@ export class GatewayEngine {
       const pdf = request.pdfAttachment
         ? await this.preparePdf(request.pdfAttachment, { directory, signal })
         : null;
-      const input = await buildCodexInput(request, pdf, directory);
+      const input = await this.prepareImages(
+        await buildCodexInput(request, pdf, directory), this.config, { signal },
+      );
       report({ stage: 'connecting' });
       const features = Object.fromEntries(DISABLED_CODEX_FEATURES.map((name) => [name, false]));
       features.skip_host_skill_discovery = true;
