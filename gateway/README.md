@@ -2,7 +2,7 @@
 
 math-reader-codex can use your own ChatGPT subscription for mathematics while keeping Gemini for audio. The gateway runs on your Mac, Linux PC or private Linux server; the BOOX APK and the GitHub Pages PWA keep their existing build and release workflows. On Windows, use WSL; native Windows execution is not validated.
 
-启用后，数学问答、套索/手写识别、习题批改、Quiz、大纲、讲义和摘要交给 Codex；录音转写和音频纪要仍使用应用原有的 Gemini 配置。关闭 Codex 开关后恢复原来的主/备 API 路由。
+启用后，可在设置页「API 配置」中为每个 AI 功能（数学问答、套索/手写识别、习题批改、Quiz、大纲、讲义和摘要等）分别选择 Codex 网关、主 API 或副 API；首次使用时沿用启用前的调用方式。录音转写和音频纪要仍使用应用原有的 Gemini 配置。关闭 Codex 开关后，选择了 Codex 网关的功能会提示 Codex 未启用，需在「API 配置」中改选主/副 API。
 
 ## Architecture
 
@@ -84,8 +84,9 @@ The Mac must remain awake, Tailscale connected, and the gateway process running.
 3. Enable the **Codex** section and enter the private gateway's base URL and its separate access token.
 4. Test the connection and load the models available to the gateway's ChatGPT account. Choose a model and supported reasoning effort.
 5. Save, then test an ordinary question, a lasso image, a PDF page and an audio recording.
+6. In **Settings → API by Feature**, choose Codex Gateway, Primary API or Backup API for each AI feature. The first run keeps the routing you had before; this choice is stored only in local IndexedDB, never R2-synced, and included in full ZIP export/import.
 
-When Codex is enabled, a Codex failure is shown to the user; mathematics does not silently fall back to Gemini. Audio requests use a configured Gemini provider even when Codex is enabled. Gateway settings and its access token are excluded from R2 metadata sync and preserved during cloud restore. A full ZIP backup includes local settings, just as it did for existing AI keys, so keep that backup private.
+A feature routed to Codex shows a Codex failure to the user; it does not silently fall back to Gemini. Audio requests use a configured Gemini provider even when Codex is enabled. Gateway settings and its access token are excluded from R2 metadata sync and preserved during cloud restore. A full ZIP backup includes local settings, just as it did for existing AI keys, so keep that backup private.
 
 ## PDF handling
 
