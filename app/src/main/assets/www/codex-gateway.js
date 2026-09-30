@@ -7,12 +7,6 @@
 
     const MAX_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
     const DEFAULT_REQUEST_TIMEOUT_MS = MAX_REQUEST_TIMEOUT_MS;
-    // The gateway enforces each lecture's generation deadline, which starts
-    // only after the job leaves its queue. Polling must outlast queue time
-    // plus that deadline, so this is only a backstop.
-    const LECTURE_JOB_MAX_WAIT_MS = 6 * 60 * 60 * 1000;
-    // Tolerate brief Wi-Fi/VPN drops or a device waking from sleep.
-    const LECTURE_JOB_OFFLINE_GRACE_MS = 2 * 60 * 1000;
 
     function gatewayError(code, message, status, cause) {
         const safeCode = String(code || 'codex_gateway_error');
@@ -315,11 +309,10 @@
         // Persist the id before submission: a lost POST response can be retried
         // with the same id without paying for a second inference request.
         if (options.lectureJob.onCreated) options.lectureJob.onCreated(id);
-        const deadline = Date.now() + LECTURE_JOB_MAX_WAIT_MS;
+        const deadline = Date.now() + 35 * 60 * 1000;
         let submitted = Boolean(options.lectureJob.id);
         let lastNetworkError;
         let networkFailures = 0;
-        let offlineSince = 0;
         const report = progress => {
             if (typeof options.lectureJob.onProgress === 'function') {
                 // A preview rendering failure must not discard the final lecture.
@@ -342,7 +335,6 @@
                 submitted = true;
                 lastNetworkError = null;
                 networkFailures = 0;
-                offlineSince = 0;
             } catch (error) {
                 if (error.code === 'job_not_found') {
                     // The gateway restarted or its result retention elapsed.
@@ -354,8 +346,7 @@
                     || (error.status >= 502 && error.status <= 504 && error.code !== 'queue_full')) {
                     lastNetworkError = error;
                     report({ stage: 'reconnecting' });
-                    if (!offlineSince) offlineSince = Date.now();
-                    if (++networkFailures >= 3 && Date.now() - offlineSince >= LECTURE_JOB_OFFLINE_GRACE_MS) {
+                    if (++networkFailures >= 3) {
                         throw gatewayError('codex_gateway_network_error',
                             'Cannot reach the gateway. The lecture job is retained; reopen it to resume. ' + error.message);
                     }
@@ -374,8 +365,7 @@
                 // Older gateways omit progress; keep their existing behavior.
                 if (job.progress) report(job.progress);
             }
-            const delay = networkFailures ? Math.min(15000, 2000 * 2 ** (networkFailures - 1)) : 2000;
-            await new Promise(resolve => setTimeout(resolve, delay));
+            await new Promise(resolve => setTimeout(resolve, 2000));
         }
         throw gatewayError('codex_gateway_timeout', lastNetworkError
             ? 'The gateway connection was lost. Reopen the lecture to retrieve its result.'
