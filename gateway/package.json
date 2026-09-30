@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@napi-rs/canvas": "1.0.9",
-    "@openai/codex": "0.155.1",
+    "@openai/codex": "0.159.2",
     "pdfjs-dist": "6.3.289"
   },
   "devDependencies": {

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { publicAuth, requireChatgptAccount } from './app-server.mjs';
 import { DISABLED_CODEX_FEATURES } from './config.mjs';
 import { GatewayError, abortError } from './errors.mjs';
+import { prepareImageUploads } from './image-uploads.mjs';
 import { LECTURE_QUALITY_INSTRUCTIONS } from './lecture-instructions.mjs';
 import { preparePdfAttachment } from './pdf.mjs';
 import { BoundedQueue } from './queue.mjs';
@@ -90,6 +91,7 @@ export class GatewayEngine {
     this.config = config;
     this.appServer = appServer;
     this.preparePdf = options.preparePdf || preparePdfAttachment;
+    this.prepareImages = options.prepareImages || prepareImageUploads;
     this.queue = new BoundedQueue({ maxPending: config.maxQueueDepth });
   }
 
@@ -231,6 +233,9 @@ export class GatewayEngine {
       const params = notification.params;
       if (!threadId || params?.threadId !== threadId) return;
       if (turnId && params.turnId && params.turnId !== turnId) return;
+      if (notification.method === 'error' && params.willRetry === true) {
+        report({ stage: 'reconnecting' });
+      }
       if (notification.method === 'item/completed' || notification.method === 'item/started') {
         const item = params?.item;
         if (FORBIDDEN_ITEM_TYPES.has(item?.type)) {
@@ -302,7 +307,9 @@ export class GatewayEngine {
       const pdf = request.pdfAttachment
         ? await this.preparePdf(request.pdfAttachment, { directory, signal })
         : null;
-      const input = await buildCodexInput(request, pdf, directory);
+      const input = await this.prepareImages(
+        await buildCodexInput(request, pdf, directory), this.config, { signal },
+      );
       report({ stage: 'connecting' });
       const features = Object.fromEntries(DISABLED_CODEX_FEATURES.map((name) => [name, false]));
       features.skip_host_skill_discovery = true;

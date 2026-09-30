@@ -61,14 +61,15 @@ approval_policy = "never"
 web_search = "disabled"
 model_provider = "math_reader_http"
 
-# Use HTTP/SSE immediately instead of retrying failed PDF WebSocket uploads.
+# Keep long lecture responses on WebSocket. Large images are uploaded separately
+# before starting the single model turn, avoiding oversized WebSocket messages.
 # Built-in provider IDs are reserved; keep the same ChatGPT endpoint and login.
 [model_providers.math_reader_http]
 name = "OpenAI"
 base_url = "https://chatgpt.com/backend-api/codex"
 wire_api = "responses"
 requires_openai_auth = true
-supports_websockets = false
+supports_websockets = true
 
 [analytics]
 enabled = false

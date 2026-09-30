@@ -19,7 +19,7 @@ Codex model computation still runs through OpenAI's services and consumes the su
 ## Requirements
 
 - Node.js 22.13 or newer, with npm.
-- The pinned official `@openai/codex@0.155.1` CLI installed by `npm ci` below.
+- The pinned official `@openai/codex@0.159.2` CLI installed by `npm ci` below.
 - A ChatGPT account with Codex access. No OpenAI Platform API key is used.
 - A private HTTPS route from the BOOX/PWA to the gateway host.
 
@@ -91,6 +91,8 @@ A feature routed to Codex shows a Codex failure to the user; it does not silentl
 ## PDF handling
 
 PDFs are parsed in a disposable worker. The gateway supplies every page as an image together with the text layer, retaining formulas, handwriting, diagrams and scanned pages. Client filenames never select filesystem paths. Temporary inputs and rendered pages live in a request-specific directory and are removed after completion, failure or cancellation.
+
+Long responses use WebSocket. When the combined inline image encoding exceeds 1 MB, the gateway uploads the original images through Codex's ChatGPT file service and includes all file references in the same model turn. This avoids oversized WebSocket messages without splitting lecture generation or reducing image quality. The pinned CLI version supports these file references. Upstream retries report the existing reconnecting state while retaining the current preview.
 
 A request accepts up to 64 MiB of PDF bytes, 48 pages, and 400,000 extracted text characters. Larger documents return an explicit `context_length_exceeded` error; they are never silently truncated. The existing outline generator recognizes this error and retries in smaller page ranges, including recursive splitting. A document with an unreadable password or broken rendering fails with an actionable error.
 
