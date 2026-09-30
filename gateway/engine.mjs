@@ -315,7 +315,8 @@ export class GatewayEngine {
           approvalPolicy: 'never',
           personality: 'none',
           serviceName: 'math-reader-codex',
-          developerInstructions: request.systemPrompt,
+          // Replace Codex's coding-agent defaults with the application's exact prompt.
+          baseInstructions: request.systemPrompt,
           config: { web_search: 'disabled', features },
         },
         {
