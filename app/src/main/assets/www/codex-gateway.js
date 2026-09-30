@@ -305,6 +305,18 @@
     }
 
     async function askLectureJob(config, payload, options) {
+        // Old gateways reject the new endpoint's OPTIONS preflight. Browsers
+        // hide that 404 behind "Failed to fetch", so the POST error handler
+        // cannot detect it. Check the established status endpoint first.
+        const status = await getStatus(config, {
+            fetchImpl: options.fetchImpl,
+            signal: options.signal,
+            timeoutMs: 30 * 1000
+        });
+        if (status.capabilities?.lectureJobs !== true) {
+            throw gatewayError('codex_gateway_upgrade_required',
+                '当前运行的网关尚未声明支持讲义任务。请更新并重启本机网关；仅更新网页或合并 PR 不会重启网关。 Update and restart the private gateway to enable lecture jobs.');
+        }
         const id = options.lectureJob.id || globalThis.crypto.randomUUID();
         // Persist the id before submission: a lost POST response can be retried
         // with the same id without paying for a second inference request.
