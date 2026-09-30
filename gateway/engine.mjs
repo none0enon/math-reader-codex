@@ -132,9 +132,9 @@ export class GatewayEngine {
     return { data: catalog.filter((model) => !model.hidden).map(publicModel) };
   }
 
-  ask(body, { signal } = {}) {
+  ask(body, { signal, onProgress } = {}) {
     const request = validateAskBody(body);
-    return this.queue.run(() => this.#execute(request, signal), { signal });
+    return this.queue.run(() => this.#execute(request, signal, onProgress), { signal });
   }
 
   async #chooseModel(request, signal) {
@@ -166,8 +166,21 @@ export class GatewayEngine {
     return chosen;
   }
 
-  async #execute(request, signal) {
+  async #execute(request, signal, onProgress) {
     if (signal?.aborted) throw abortError(signal);
+    // Only lecture jobs opt in. Keep previews bounded and separate from the
+    // authoritative final answer; never forward raw reasoning content.
+    let progress = { stage: 'preparing', partialText: '', reasoningSummary: '' };
+    const report = (update) => {
+      if (!onProgress) return;
+      progress = { ...progress, ...update };
+      onProgress(progress);
+    };
+    report({});
+    let messageId;
+    let reasoningId;
+    let summaryIndex;
+    const messagePhases = new Map();
     const account = await this.appServer.readAccount({ signal, refreshToken: true });
     requireChatgptAccount(account);
     const selectedModel = await this.#chooseModel(request, signal);
@@ -217,6 +230,7 @@ export class GatewayEngine {
     const onNotification = (notification) => {
       const params = notification.params;
       if (!threadId || params?.threadId !== threadId) return;
+      if (turnId && params.turnId && params.turnId !== turnId) return;
       if (notification.method === 'item/completed' || notification.method === 'item/started') {
         const item = params?.item;
         if (FORBIDDEN_ITEM_TYPES.has(item?.type)) {
@@ -233,6 +247,35 @@ export class GatewayEngine {
         if (notification.method === 'item/completed' && item?.type === 'agentMessage') {
           observedMessages.push(item);
         }
+        if (onProgress && item?.type === 'agentMessage') {
+          messagePhases.set(item.id, item.phase);
+          if (item.phase !== 'commentary') {
+            messageId = item.id;
+            report({ stage: 'writing', partialText: String(item.text || '').slice(0, 120_000) });
+          }
+        }
+        if (onProgress && item?.type === 'reasoning') {
+          reasoningId = item.id;
+          summaryIndex = undefined;
+          report({
+            stage: 'reasoning',
+            reasoningSummary: (item.summary || []).filter(part => typeof part === 'string').join('\n\n').slice(-12_000),
+          });
+        }
+      }
+      if (onProgress && notification.method === 'item/agentMessage/delta'
+          && typeof params.delta === 'string' && messagePhases.get(params.itemId) !== 'commentary') {
+        const previous = messageId === params.itemId ? progress.partialText : '';
+        messageId = params.itemId;
+        report({ stage: 'writing', partialText: (previous + params.delta).slice(0, 120_000) });
+      }
+      if (onProgress && notification.method === 'item/reasoning/summaryTextDelta'
+          && typeof params.delta === 'string') {
+        const previous = reasoningId === params.itemId ? progress.reasoningSummary : '';
+        const separator = previous && summaryIndex !== params.summaryIndex ? '\n\n' : '';
+        reasoningId = params.itemId;
+        summaryIndex = params.summaryIndex;
+        report({ stage: 'reasoning', reasoningSummary: (previous + separator + params.delta).slice(-12_000) });
       }
       if (notification.method === 'turn/completed' && (!turnId || params?.turn?.id === turnId)) {
         resolveCompletion(params.turn);
@@ -260,6 +303,7 @@ export class GatewayEngine {
         ? await this.preparePdf(request.pdfAttachment, { directory, signal })
         : null;
       const input = await buildCodexInput(request, pdf, directory);
+      report({ stage: 'connecting' });
       const features = Object.fromEntries(DISABLED_CODEX_FEATURES.map((name) => [name, false]));
       features.skip_host_skill_discovery = true;
       const threadResponse = await this.appServer.request(
@@ -285,6 +329,7 @@ export class GatewayEngine {
       );
       threadId = threadResponse?.thread?.id;
       if (!threadId) throw new GatewayError('codex_protocol_error', 'Codex omitted the thread id.', 502);
+      report({ stage: 'generating' });
       const turnResponse = await this.appServer.request(
         'turn/start',
         {
@@ -292,6 +337,7 @@ export class GatewayEngine {
           input,
           model,
           ...(request.reasoningEffort ? { effort: request.reasoningEffort } : {}),
+          ...(onProgress ? { summary: 'auto' } : {}),
         },
         {
           signal,

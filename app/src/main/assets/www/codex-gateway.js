@@ -313,6 +313,13 @@
         let submitted = Boolean(options.lectureJob.id);
         let lastNetworkError;
         let networkFailures = 0;
+        const report = progress => {
+            if (typeof options.lectureJob.onProgress === 'function') {
+                // A preview rendering failure must not discard the final lecture.
+                try { options.lectureJob.onProgress(progress); }
+                catch (error) { console.warn('Lecture preview could not be displayed', error); }
+            }
+        };
         while (Date.now() < deadline) {
             if (options.signal && options.signal.aborted) {
                 throw gatewayError('codex_gateway_aborted', 'Stopped waiting for the lecture; reopen it to resume.');
@@ -332,11 +339,13 @@
                 if (error.code === 'job_not_found') {
                     // The gateway restarted or its result retention elapsed.
                     submitted = false;
+                    report({ stage: 'queued', partialText: '', reasoningSummary: '', elapsedMs: 0 });
                 } else if (error.code === 'not_found' && !submitted) {
                     throw gatewayError('codex_gateway_upgrade_required', 'Update and restart the private gateway to enable resumable lecture generation.');
                 } else if (error.code === 'codex_gateway_network_error' || error.code === 'codex_gateway_timeout' || error.name === 'AbortError'
                     || (error.status >= 502 && error.status <= 504 && error.code !== 'queue_full')) {
                     lastNetworkError = error;
+                    report({ stage: 'reconnecting' });
                     if (++networkFailures >= 3) {
                         throw gatewayError('codex_gateway_network_error',
                             'Cannot reach the gateway. The lecture job is retained; reopen it to resume. ' + error.message);
@@ -353,8 +362,10 @@
                 if (job.status !== 'pending') {
                     throw gatewayError('codex_gateway_response_invalid', 'The gateway returned an invalid lecture job status.');
                 }
+                // Older gateways omit progress; keep their existing behavior.
+                if (job.progress) report(job.progress);
             }
-            await new Promise(resolve => setTimeout(resolve, 3000));
+            await new Promise(resolve => setTimeout(resolve, 2000));
         }
         throw gatewayError('codex_gateway_timeout', lastNetworkError
             ? 'The gateway connection was lost. Reopen the lecture to retrieve its result.'
