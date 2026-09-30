@@ -2,16 +2,19 @@ import { createHash } from 'node:crypto';
 import { GatewayError, asGatewayError } from './errors.mjs';
 import { validateAskBody } from './request.mjs';
 
-const JOB_TIMEOUT_MS = 30 * 60 * 1000;
+const DEFAULT_JOB_TIMEOUT_MS = 60 * 60 * 1000;
 const RESULT_RETENTION_MS = 30 * 60 * 1000;
 
 // Lecture jobs outlive individual HTTP requests. Only the job deadline, not a
-// browser disconnect while polling, cancels inference. The registry is private
-// to this gateway process and all access still requires its bearer token.
+// browser disconnect while polling, cancels inference. The deadline starts when
+// the job leaves the inference queue, so a chapter waiting behind another
+// lecture keeps its full generation time. The registry is private to this
+// gateway process and all access still requires its bearer token.
 export class LectureJobs {
-  constructor(engine, maxPending) {
+  constructor(engine, maxPending, { timeoutMs = DEFAULT_JOB_TIMEOUT_MS } = {}) {
     this.engine = engine;
     this.maxActive = maxPending + 1;
+    this.timeoutMs = timeoutMs;
     this.jobs = new Map();
   }
 
@@ -62,14 +65,20 @@ export class LectureJobs {
       progress: { stage: 'queued', partialText: '', reasoningSummary: '' },
     };
     this.jobs.set(body.id, job);
-    const timer = setTimeout(() => controller.abort(
-      new GatewayError('request_timeout', 'Lecture generation exceeded 30 minutes; use a smaller section or lower reasoning effort.', 504),
-    ), JOB_TIMEOUT_MS);
-    timer.unref?.();
+    const minutes = Math.max(1, Math.round(this.timeoutMs / 60_000));
+    let timer;
+    const startDeadline = () => {
+      if (timer) return;
+      timer = setTimeout(() => controller.abort(
+        new GatewayError('request_timeout', `Lecture generation exceeded ${minutes} minutes; use a smaller section or lower reasoning effort.`, 504),
+      ), this.timeoutMs);
+      timer.unref?.();
+    };
     // Validation above is synchronous. The remaining work is deliberately not
     // awaited by the HTTP handler, including time spent in the inference queue.
     Promise.resolve().then(() => this.engine.ask(body.request, {
       signal: controller.signal,
+      onStart: startDeadline,
       onProgress: progress => { job.progress = progress; },
     }))
       .then(result => {

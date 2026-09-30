@@ -121,6 +121,13 @@ export function loadConfig(env = process.env) {
       min: 1_000,
       max: 3_600_000,
     }),
+    // Generation time for one lecture job, counted from when it leaves the
+    // queue. ChatGPT ends a single response stream after about 15 minutes and
+    // Codex then retries, so a long lecture can need far more than 15 minutes.
+    lectureTimeoutMs: integer(env.MATH_READER_GATEWAY_LECTURE_TIMEOUT_MS, 3_600_000, {
+      min: 60_000,
+      max: 14_400_000,
+    }),
     maxQueueDepth: integer(env.MATH_READER_GATEWAY_MAX_QUEUE, 8, { min: 0, max: 100 }),
     maxBodyBytes: integer(env.MATH_READER_GATEWAY_MAX_BODY_BYTES, 96 * 1024 * 1024, {
       min: 1024,
