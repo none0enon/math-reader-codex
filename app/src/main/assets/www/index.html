@@ -2435,6 +2435,45 @@
             transform: rotate(90deg);
         }
 
+        /* API by feature: collapsed groups, one select per AI feature */
+        .ai-route-note {
+            padding: 0 20px 8px;
+            font-size: 12px;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        .ai-route-panel {
+            padding: 0 20px 6px 68px;
+        }
+
+        .ai-route-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 10px 0;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .ai-route-row-text { min-width: 0; }
+        .ai-route-row-label { font-size: 14px; }
+        .ai-route-row-desc { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+        .ai-route-select {
+            flex-shrink: 0;
+            padding: 6px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-size: 13px;
+        }
+
+        @media (max-width: 420px) {
+            .ai-route-panel { padding-left: 20px; }
+        }
+
         /* Upload Modal Styles (avatar modals) */
         .upload-options {
             display: flex;
@@ -5772,6 +5811,29 @@
             </div>
         </div>
 
+        <!-- API by Feature (local IndexedDB only; included in ZIP export/import) -->
+        <div class="settings-section">
+            <div class="settings-section-title" data-i18n="ai_route_settings">API 配置</div>
+            <div class="setting-item" id="aiRouteEntry" role="button" tabindex="0" aria-expanded="false"
+                onclick="toggleAiRouteSettings()"
+                onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAiRouteSettings();}">
+                <div class="setting-item-left">
+                    <div class="setting-item-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+                    </div>
+                    <div>
+                        <div class="setting-item-label" data-i18n="ai_route_entry">按功能选择 API</div>
+                        <div class="setting-item-desc" id="aiRouteTotalSummary"></div>
+                    </div>
+                </div>
+                <span class="settings-item-arrow" id="aiRouteArrow">›</span>
+            </div>
+            <div id="aiRouteBody" style="display:none;">
+                <div class="ai-route-note" data-i18n="ai_route_note">为每个 AI 功能选择调用的 API。配置仅保存在本机，不参与云同步；导出/导入 ZIP 时一并包含。</div>
+                <div id="aiRouteGroups"></div>
+            </div>
+        </div>
+
         <!-- Data Management -->
         <div class="settings-section">
             <div class="settings-section-title" data-i18n="data_management">数据管理</div>
@@ -7213,11 +7275,11 @@
         });
         Object.assign(I18N.zh, {
             codex_gateway_title:'个人 Codex Gateway', codex_enable:'启用 Codex',
-            codex_enable_desc:'非音频 AI 请求将只使用 Codex Gateway',
+            codex_enable_desc:'启用后，可在设置页「API 配置」中为各功能选择 Codex 网关',
             codex_gateway_url:'Gateway URL', codex_gateway_token:'Gateway 访问令牌', codex_model:'Codex 模型',
             codex_reasoning_effort:'推理强度', codex_reasoning_default:'使用 Gateway 默认值',
             codex_test_connection:'测试 Codex Gateway',
-            codex_gateway_scope_note:'关闭时沿用下方主/备用 API；开启时下方 Gemini 配置仅用于音频。',
+            codex_gateway_scope_note:'各 AI 功能调用哪个 API 在设置页「API 配置」中选择；音频（录音纪要）不支持 Codex，只使用下方主/备用 API。',
             codex_status_checking:'正在检查 Codex Gateway…',
             codex_status_ready:'Gateway 已就绪 · 登录：{0}', codex_status_not_ready:'Gateway 未就绪 · 登录：{0}',
             codex_auth_chatgpt:'ChatGPT', codex_auth_none:'未登录',
@@ -7227,11 +7289,11 @@
         });
         Object.assign(I18N.en, {
             codex_gateway_title:'Personal Codex Gateway', codex_enable:'Enable Codex',
-            codex_enable_desc:'Route every non-audio AI request only through Codex Gateway',
+            codex_enable_desc:'When enabled, choose the Codex Gateway per feature in Settings › API by Feature',
             codex_gateway_url:'Gateway URL', codex_gateway_token:'Gateway token', codex_model:'Codex model',
             codex_reasoning_effort:'Reasoning effort', codex_reasoning_default:'Use Gateway default',
             codex_test_connection:'Test Codex Gateway',
-            codex_gateway_scope_note:'When disabled, the primary/backup APIs below are used. When enabled, their Gemini configuration is kept only for audio.',
+            codex_gateway_scope_note:'Choose which API each AI feature uses in Settings › API by Feature. Audio (recording minutes) cannot use Codex and only uses the primary/backup APIs below.',
             codex_status_checking:'Checking Codex Gateway…',
             codex_status_ready:'Gateway ready · Sign-in: {0}', codex_status_not_ready:'Gateway not ready · Sign-in: {0}',
             codex_auth_chatgpt:'ChatGPT', codex_auth_none:'Not signed in',
@@ -7241,17 +7303,77 @@
         });
         Object.assign(I18N.fr, {
             codex_gateway_title:'Passerelle Codex personnelle', codex_enable:'Activer Codex',
-            codex_enable_desc:'Acheminer toutes les requêtes IA sans audio uniquement via la passerelle Codex',
+            codex_enable_desc:'Une fois activée, choisissez la passerelle Codex par fonctionnalité dans Réglages › API par fonctionnalité',
             codex_gateway_url:'URL de la passerelle', codex_gateway_token:"Jeton d’accès de la passerelle", codex_model:'Modèle Codex',
             codex_reasoning_effort:'Niveau de raisonnement', codex_reasoning_default:'Utiliser la valeur par défaut de la passerelle',
             codex_test_connection:'Tester la passerelle Codex',
-            codex_gateway_scope_note:'Si cette option est désactivée, les API principale/de secours ci-dessous sont utilisées. Si elle est activée, leur configuration Gemini est conservée uniquement pour l’audio.',
+            codex_gateway_scope_note:'Choisissez l’API utilisée par chaque fonction IA dans Réglages › API par fonctionnalité. L’audio (compte rendu d’enregistrement) ne peut pas utiliser Codex et n’utilise que les API principale/de secours ci-dessous.',
             codex_status_checking:'Vérification de la passerelle Codex…',
             codex_status_ready:'Passerelle prête · Connexion : {0}', codex_status_not_ready:'Passerelle non prête · Connexion : {0}',
             codex_auth_chatgpt:'ChatGPT', codex_auth_none:'Non connecté',
             codex_models_loaded:'{0} modèles Codex chargés',
             codex_gateway_module_missing:"Le module frontal de la passerelle Codex n’est pas chargé",
             codex_audio_requires_gemini:"Codex est activé, mais l’audio nécessite toujours Gemini dans les réglages de l’API principale ou de secours."
+        });
+        Object.assign(I18N.zh, {
+            ai_route_settings:'API 配置',
+            ai_route_note:'为每个 AI 功能选择调用的 API。配置仅保存在本机，不参与云同步；导出/导入 ZIP 时一并包含。',
+            ai_route_codex:'Codex 网关', ai_route_primary:'主 API', ai_route_backup:'副 API',
+            ai_route_codex_off:'Codex 未启用',
+            ai_route_codex_disabled:'「{0}」设置为使用 Codex 网关，但 Codex 未启用。请在 API Setting 中启用 Codex，或在设置页「API 配置」中改选其他 API。',
+            ai_route_backup_missing:'「{0}」设置为使用副 API，但副 API 尚未配置。',
+            ai_route_save_failed:'保存 API 配置失败：',
+            ai_route_entry:'按功能选择 API',
+            ai_route_f_classroom_photo:'照片生成讲义', ai_route_f_classroom_file:'文件生成讲义', ai_route_f_recording:'录音纪要',
+            ai_route_f_recording_desc:'Codex 网关不支持音频',
+            ai_route_f_outline:'生成大纲', ai_route_f_abstract:'生成摘要', ai_route_f_chat:'AI 助手对话',
+            ai_route_f_reader_chat:'阅读 AI 对话', ai_route_f_reader_selection:'套索问 AI',
+            ai_route_f_lecture:'生成讲义', ai_route_f_text_selection:'划词问 AI',
+            ai_route_f_nb_recognize:'AI 识别选区手写',
+            ai_route_f_review_quiz:'复习 Quiz 出题', ai_route_f_review_grade:'复习 Quiz 评分',
+            ai_route_f_exercise_upload:'上传习题识别题目', ai_route_f_exercise_batch:'批量图片识别题目', ai_route_f_exercise_regenerate:'重新识别题目',
+            ai_route_f_grade_all:'全部评分', ai_route_f_grade_complete:'完成作答评分', ai_route_f_wrong_regrade:'重新生成错题评语',
+            ai_route_f_wrong_question_chat:'单题错题问 AI', ai_route_f_wrong_batch_chat:'多选错题问 AI'
+        });
+        Object.assign(I18N.en, {
+            ai_route_settings:'API by Feature',
+            ai_route_note:'Choose the API each AI feature uses. Saved only on this device, never synced to the cloud, and included in ZIP export/import.',
+            ai_route_codex:'Codex Gateway', ai_route_primary:'Primary API', ai_route_backup:'Backup API',
+            ai_route_codex_off:'Codex is off',
+            ai_route_codex_disabled:'“{0}” is set to use the Codex Gateway, but Codex is disabled. Enable Codex in API Setting, or choose another API in Settings › API by Feature.',
+            ai_route_backup_missing:'“{0}” is set to use the backup API, but no backup API is configured.',
+            ai_route_save_failed:'Could not save API by Feature: ',
+            ai_route_entry:'Choose API per feature',
+            ai_route_f_classroom_photo:'Lecture from photo', ai_route_f_classroom_file:'Lecture from file', ai_route_f_recording:'Recording minutes',
+            ai_route_f_recording_desc:'Codex does not support audio',
+            ai_route_f_outline:'Outline generation', ai_route_f_abstract:'Abstract generation', ai_route_f_chat:'AI Assistant chat',
+            ai_route_f_reader_chat:'Reader AI chat', ai_route_f_reader_selection:'Ask AI about a lasso selection',
+            ai_route_f_lecture:'Lecture generation', ai_route_f_text_selection:'Ask AI about selected text',
+            ai_route_f_nb_recognize:'AI recognize selected handwriting',
+            ai_route_f_review_quiz:'Review quiz generation', ai_route_f_review_grade:'Review quiz grading',
+            ai_route_f_exercise_upload:'Extract questions from upload', ai_route_f_exercise_batch:'Extract questions from batch photos', ai_route_f_exercise_regenerate:'Re-extract questions',
+            ai_route_f_grade_all:'Grade all', ai_route_f_grade_complete:'Grade on completion', ai_route_f_wrong_regrade:'Regenerate wrong-answer comment',
+            ai_route_f_wrong_question_chat:'Ask AI about one wrong answer', ai_route_f_wrong_batch_chat:'Ask AI about selected wrong answers'
+        });
+        Object.assign(I18N.fr, {
+            ai_route_settings:'API par fonctionnalité',
+            ai_route_note:'Choisissez l’API utilisée par chaque fonction IA. Enregistré uniquement sur cet appareil, jamais synchronisé avec le cloud, et inclus dans l’export/import ZIP.',
+            ai_route_codex:'Passerelle Codex', ai_route_primary:'API principale', ai_route_backup:'API de secours',
+            ai_route_codex_off:'Codex désactivé',
+            ai_route_codex_disabled:'« {0} » doit utiliser la passerelle Codex, mais Codex est désactivé. Activez Codex dans Paramètres API ou choisissez une autre API dans Réglages › API par fonctionnalité.',
+            ai_route_backup_missing:'« {0} » doit utiliser l’API de secours, mais aucune API de secours n’est configurée.',
+            ai_route_save_failed:'Échec de l’enregistrement de l’API par fonctionnalité : ',
+            ai_route_entry:'Choisir l’API par fonction',
+            ai_route_f_classroom_photo:'Cours à partir d’une photo', ai_route_f_classroom_file:'Cours à partir d’un fichier', ai_route_f_recording:'Compte rendu d’enregistrement',
+            ai_route_f_recording_desc:'Audio non pris en charge par Codex',
+            ai_route_f_outline:'Génération du plan', ai_route_f_abstract:'Génération du résumé', ai_route_f_chat:'Discussion avec l’assistant IA',
+            ai_route_f_reader_chat:'Discussion IA en lecture', ai_route_f_reader_selection:'Demander à l’IA (sélection au lasso)',
+            ai_route_f_lecture:'Génération de cours', ai_route_f_text_selection:'Demander à l’IA (texte sélectionné)',
+            ai_route_f_nb_recognize:'Reconnaissance IA de la sélection',
+            ai_route_f_review_quiz:'Génération des quiz de révision', ai_route_f_review_grade:'Notation des quiz de révision',
+            ai_route_f_exercise_upload:'Extraction depuis un fichier importé', ai_route_f_exercise_batch:'Extraction depuis des photos en lot', ai_route_f_exercise_regenerate:'Réextraire les questions',
+            ai_route_f_grade_all:'Tout noter', ai_route_f_grade_complete:'Notation à la fin de la réponse', ai_route_f_wrong_regrade:'Régénérer le commentaire d’erreur',
+            ai_route_f_wrong_question_chat:'Demander à l’IA sur une erreur', ai_route_f_wrong_batch_chat:'Demander à l’IA sur les erreurs sélectionnées'
         });
         Object.assign(I18N.zh, {
             back:'返回', new:'新建', skip:'跳过', discard:'丢弃', edit:'编辑', rename:'重命名', grade_all:'全部评分', export_assignment:'导出作业', correct:'正确', incorrect:'不正确', answer:'作答', completed:'已完成', deleted:'已删除', unknown:'未知',
@@ -7441,6 +7563,8 @@
                     saveData();
                 }
             }
+            // 按功能的 API 配置（本机 IndexedDB）；首次使用时以当前调用方式作为初始配置。
+            await loadAiFeatureRoutes();
             applySettings();
             renderLibrary();
             renderNotesPage();
@@ -12003,7 +12127,7 @@
                         ]
                     }];
                     
-                    const ocrText = await callAI(i18n('prompt_ocr'), messages) || '';
+                    const ocrText = await callAI(i18n('prompt_ocr'), messages, { feature: 'ocr' }) || '';
                     
                     ocrTextCache[pageNum] = {
                         text: ocrText,
@@ -12803,6 +12927,7 @@
             appData.settings.mathpixAppKey = document.getElementById('modalMathpixAppKey').value;
             saveData();
             backupApiSettingsToIDB();
+            refreshAiRouteSummaries();
             hideModal('apiModal');
             showToast(i18n('toast_settings_saved'));
         }
@@ -12854,24 +12979,29 @@
             return typeof url === 'string' && url.indexOf('generativelanguage.googleapis.com') !== -1;
         }
 
+        // 长录音走 Gemini Files API，按「录音纪要」的 API 配置选主/副 API。
         function _configuredGeminiRecordingConfig() {
-            return _configuredGeminiRecordingConfigs()[0] || null;
+            return _configuredGeminiRecordingConfigs(aiFeatureRoute('recording'))[0] || null;
         }
 
-        function _configuredGeminiRecordingConfigs() {
+        // route 为 'backup' 时只用备用 API；否则主 API 优先、备用兜底。
+        function _configuredGeminiRecordingConfigs(route) {
             const settings = appData.settings || {};
             const candidates = [{
+                slot: 'primary',
                 url: settings.aiApiUrl,
                 key: settings.aiApiKey,
                 model: settings.aiModel,
                 provider: settings.apiProvider || ''
             }, {
+                slot: 'backup',
                 url: settings.backupUrl,
                 key: settings.backupKey,
                 model: settings.backupModel,
                 provider: settings.backupProvider || ''
             }];
-            return candidates.filter(config => config.url && config.key && config.model &&
+            return candidates.filter(config => (route !== 'backup' || config.slot === 'backup') &&
+                config.url && config.key && config.model &&
                 (isGeminiUrl(config.url) || config.provider === 'custom'));
         }
 
@@ -13510,8 +13640,8 @@
 
         async function requestTextSelectionAI(selectedText, userDesc) {
             const prompt = buildSelectionAskPrompt(selectedText, userDesc);
-            return await callAI(i18n('prompt_math_explain'), [{ role: 'user', content: prompt }])
-                || i18n('chat_no_ai_answer');
+            return await callAI(i18n('prompt_math_explain'), [{ role: 'user', content: prompt }],
+                { feature: 'lectureSelection' }) || i18n('chat_no_ai_answer');
         }
 
         // 阅读页套索始终发送截图；讲义选中文字仍单独复用上面的文本请求 helper。
@@ -13539,7 +13669,7 @@
                     { type: 'image_url', image_url: { url: sel.image } },
                     { type: 'text', text: tip }
                 ] }];
-                const aiResponse = await callAI(i18n('prompt_math_explain'), messages)
+                const aiResponse = await callAI(i18n('prompt_math_explain'), messages, { feature: 'readerSelection' })
                     || i18n('chat_no_ai_answer');
                 addDocAiComment(docId, sel.page, sel.cx, sel.cy, aiResponse, userDesc);
                 showToast(i18n('toast_note_added'));
@@ -18176,6 +18306,10 @@
                     '__recording_manifest_';
                 const recordingChunkPrefix = recordingStorageApi?.CHUNK_PREFIX ||
                     '__recording_chunk_';
+                // 按功能的 API 配置只存 IndexedDB；先写入当前配置，确保随 idb 条目进入 ZIP。
+                if (aiFeatureRoutesLoaded) {
+                    await saveAiFeatureRoutes().catch(e => console.warn('[API 配置] 导出前保存失败:', e));
+                }
                 const keys = [...new Set([...(await listFileKeys()), ...verifiedIdbData.keys()])]
                     .filter(key => verifiedIdbData.has(key) || typeof key !== 'string' ||
                         (!key.startsWith(recordingManifestPrefix) &&
@@ -18429,6 +18563,8 @@
                 const exercisesSaved = await exWaitForExercisesDataSaves();
                 if (!metadataSaved || !exercisesSaved) throw new Error(i18n('storage_save_failed'));
                 await restoreBlobsFromIDB();
+                // ZIP 的 idb 条目已恢复按功能的 API 配置；旧备份没有该条目时保留本机配置。
+                await loadAiFeatureRoutes();
                 applySettings();
                 renderLibrary();
                 renderNotesPage();
@@ -19123,6 +19259,7 @@
             }
 
             const apiMessages = buildReaderChatApiMessages(history, currentDoc);
+            const chatFeature = currentDoc.question ? 'wrongQuestionChat' : 'readerChat';
 
             const container = document.getElementById('readerChatContainer');
             const loadingDiv = document.createElement('div');
@@ -19138,7 +19275,7 @@
             container.scrollTop = container.scrollHeight;
 
             try {
-                const result = await callReaderAI(systemPrompt, apiMessages, { pdfAttachment });
+                const result = await callReaderAI(systemPrompt, apiMessages, { pdfAttachment, feature: chatFeature });
                 if (readerChatDoc?.id === currentDoc.id) document.getElementById('readerChatLoading')?.remove();
                 if (result) {
                     history.push({ role: 'assistant', content: result });
@@ -19244,6 +19381,7 @@
             renderReaderChatHistory(currentDoc.id);
 
             // 切出当前页PDF作为附件发给AI
+            const chatFeature = currentDoc.question ? 'wrongQuestionChat' : 'readerChat';
             let pdfAttachment = null;
             if (currentDoc.type === 'pdf') {
                 try {
@@ -19252,7 +19390,7 @@
                     pdfAttachment = { bytes: slice.bytes, base64: slice.base64, name: `${currentDoc.title}_p${currentPage}.pdf` };
                 } catch (e) {
                     console.error('切出当前页PDF失败:', e);
-                    if (appData.settings?.codexEnabled) {
+                    if (aiFeatureUsesCodex(chatFeature)) {
                         showToast(i18n('toast_failed') + (e?.message || String(e)));
                         return;
                     }
@@ -19288,7 +19426,7 @@
             container.scrollTop = container.scrollHeight;
 
             try {
-                const result = await callReaderAI(systemPrompt, apiMessages, { pdfAttachment });
+                const result = await callReaderAI(systemPrompt, apiMessages, { pdfAttachment, feature: chatFeature });
                 if (readerChatDoc?.id === currentDoc.id) document.getElementById('readerChatLoading')?.remove();
 
                 if (result) {
@@ -19318,19 +19456,312 @@
             }
         }
 
+        // ==================== API 配置：按功能选择 Codex 网关 / 主 API / 副 API ====================
+        // 只保存在本机 IndexedDB（APK 即本机 WebView 存储），不写入 appData，因此不参与云同步；
+        // 导出 ZIP 时随 IndexedDB 条目一起导出，导入 ZIP 时一起恢复。
+        const AI_ROUTE_STORAGE_KEY = '__ai_feature_routes__';
+        const AI_ROUTE_FORMAT = 'math-reader-ai-routes-v1';
+        const AI_ROUTE_CHOICES = ['codex', 'primary', 'backup'];
+        const AI_ROUTE_AUDIO_CHOICES = ['primary', 'backup'];
+        // 分组顺序与图标沿用底部导航，组名直接复用导航文案，各语言命名与导航一致。
+        const AI_ROUTE_GROUPS = [
+            {
+                id: 'classroom', label: 'nav_classroom',
+                icon: '<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>',
+                features: [
+                    { id: 'classroomPhoto', label: 'ai_route_f_classroom_photo' },
+                    { id: 'classroomFile', label: 'ai_route_f_classroom_file' },
+                    { id: 'recording', label: 'ai_route_f_recording', desc: 'ai_route_f_recording_desc', audio: true }
+                ]
+            },
+            {
+                id: 'library', label: 'nav_bookshelf',
+                icon: '<path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>',
+                features: [
+                    { id: 'outline', label: 'ai_route_f_outline' },
+                    { id: 'abstract', label: 'ai_route_f_abstract' },
+                    { id: 'chat', label: 'ai_route_f_chat', desc: 'ai_idk_suggest' }
+                ]
+            },
+            {
+                id: 'reader', label: 'nav_reader',
+                icon: '<path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/>',
+                features: [
+                    { id: 'readerChat', label: 'ai_route_f_reader_chat' },
+                    { id: 'readerSelection', label: 'ai_route_f_reader_selection' },
+                    { id: 'ocr', label: 'ocr_search' }
+                ]
+            },
+            {
+                id: 'lectures', label: 'nav_lectures',
+                icon: '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
+                features: [
+                    { id: 'lecture', label: 'ai_route_f_lecture' },
+                    { id: 'lectureSelection', label: 'ai_route_f_text_selection' }
+                ]
+            },
+            {
+                id: 'notes', label: 'nav_notes',
+                icon: '<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>',
+                features: [
+                    { id: 'nbRecognize', label: 'ai_route_f_nb_recognize' },
+                    { id: 'nbHandwritingIndex', label: 'ai_build_handwriting_index' },
+                    { id: 'reviewQuiz', label: 'ai_route_f_review_quiz' },
+                    { id: 'reviewGrade', label: 'ai_route_f_review_grade' }
+                ]
+            },
+            {
+                id: 'exercises', label: 'nav_exercises',
+                icon: '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>',
+                features: [
+                    { id: 'exerciseUpload', label: 'ai_route_f_exercise_upload' },
+                    { id: 'exerciseBatch', label: 'ai_route_f_exercise_batch' },
+                    { id: 'exerciseRegenerate', label: 'ai_route_f_exercise_regenerate' },
+                    { id: 'gradeAll', label: 'ai_route_f_grade_all' },
+                    { id: 'gradeComplete', label: 'ai_route_f_grade_complete' },
+                    { id: 'wrongRegrade', label: 'ai_route_f_wrong_regrade' },
+                    { id: 'exerciseSelection', label: 'ai_route_f_text_selection' },
+                    { id: 'wrongQuestionChat', label: 'ai_route_f_wrong_question_chat' },
+                    { id: 'wrongBatchChat', label: 'ai_route_f_wrong_batch_chat' }
+                ]
+            }
+        ];
+        let aiFeatureRoutes = null;
+        // 仅在确实读到本机 IndexedDB 后才允许导出前补写，避免读失败时用默认值覆盖已有配置。
+        let aiFeatureRoutesLoaded = false;
+
+        function aiRouteFeature(featureId) {
+            for (const group of AI_ROUTE_GROUPS) {
+                const feature = group.features.find(item => item.id === featureId);
+                if (feature) return feature;
+            }
+            return null;
+        }
+
+        function aiRouteChoicesFor(feature) {
+            return feature && feature.audio ? AI_ROUTE_AUDIO_CHOICES : AI_ROUTE_CHOICES;
+        }
+
+        // 初始默认值 = 引入本配置前的实际调用方式：Codex 开启时非音频功能只走 Codex，
+        // 关闭时走主 API（失败再用副 API）。音频原先在 Codex 开启时只用主/备用中的 Gemini，
+        // 所以主 API 不是 Gemini 而备用是时，录音纪要默认直接用副 API。
+        function defaultAiFeatureRoute(feature) {
+            const settings = appData.settings || {};
+            if (!feature || !feature.audio) return settings.codexEnabled ? 'codex' : 'primary';
+            if (settings.codexEnabled && _configuredGeminiRecordingConfigs()[0]?.slot === 'backup') return 'backup';
+            return 'primary';
+        }
+
+        function normalizeAiFeatureRoutes(stored) {
+            const source = stored && typeof stored === 'object' && stored.routes && typeof stored.routes === 'object'
+                ? stored.routes : {};
+            const routes = {};
+            AI_ROUTE_GROUPS.forEach(group => group.features.forEach(feature => {
+                const value = source[feature.id];
+                routes[feature.id] = aiRouteChoicesFor(feature).includes(value) ? value : defaultAiFeatureRoute(feature);
+            }));
+            return routes;
+        }
+
+        function aiFeatureRoute(featureId) {
+            const feature = aiRouteFeature(featureId);
+            if (!feature) return appData.settings?.codexEnabled ? 'codex' : 'primary';
+            const route = aiFeatureRoutes?.[featureId];
+            return aiRouteChoicesFor(feature).includes(route) ? route : defaultAiFeatureRoute(feature);
+        }
+
+        function aiFeatureUsesCodex(featureId) {
+            return aiFeatureRoute(featureId) === 'codex';
+        }
+
+        function aiFeatureLabel(featureId) {
+            const feature = aiRouteFeature(featureId);
+            return feature ? i18n(feature.label) : '';
+        }
+
+        async function saveAiFeatureRoutes() {
+            if (!aiFeatureRoutes) aiFeatureRoutes = normalizeAiFeatureRoutes(null);
+            await saveFileData(AI_ROUTE_STORAGE_KEY, {
+                format: AI_ROUTE_FORMAT,
+                routes: { ...aiFeatureRoutes },
+                updatedAt: new Date().toISOString()
+            });
+        }
+
+        // 启动时和导入 ZIP 后调用。首次使用时把当前实际调用方式固定为初始配置；
+        // 读取失败时不写入，避免用默认值覆盖本机已有配置。
+        async function loadAiFeatureRoutes() {
+            let stored = null;
+            let readable = false;
+            try {
+                if (await ensureFileDB()) {
+                    stored = await getFileData(AI_ROUTE_STORAGE_KEY);
+                    readable = true;
+                }
+            } catch (e) {
+                console.warn('[API 配置] 读取失败:', e);
+            }
+            aiFeatureRoutes = normalizeAiFeatureRoutes(stored);
+            aiFeatureRoutesLoaded = readable;
+            const storedRoutes = stored && typeof stored === 'object' ? stored.routes : null;
+            const changed = !storedRoutes ||
+                Object.keys(aiFeatureRoutes).some(id => storedRoutes[id] !== aiFeatureRoutes[id]);
+            if (readable && changed && appDataLoaded) {
+                await saveAiFeatureRoutes().catch(e => console.warn('[API 配置] 保存失败:', e));
+            }
+            renderAiRouteSettings();
+        }
+
+        function aiRouteLabelKey(route) {
+            return route === 'codex' ? 'ai_route_codex' : (route === 'backup' ? 'ai_route_backup' : 'ai_route_primary');
+        }
+
+        // 折叠组的摘要：组内所用 API（按出现顺序去重），选了 Codex 但 Codex 未启用时附提示。
+        function aiRouteGroupSummaryHtml(group) {
+            const routes = [...new Set(group.features.map(feature => aiFeatureRoute(feature.id)))];
+            let html = routes.map(route => {
+                const key = aiRouteLabelKey(route);
+                return `<span data-i18n="${key}">${escapeHtml(i18n(key))}</span>`;
+            }).join(' / ');
+            if (routes.includes('codex') && !appData.settings?.codexEnabled) {
+                html += ` · <span data-i18n="ai_route_codex_off">${escapeHtml(i18n('ai_route_codex_off'))}</span>`;
+            }
+            return html;
+        }
+
+        function renderAiRouteSettings() {
+            const container = document.getElementById('aiRouteGroups');
+            if (!container) return;
+            const expanded = new Set([...container.querySelectorAll('.ai-route-group.expanded')]
+                .map(el => el.dataset.group));
+            container.innerHTML = AI_ROUTE_GROUPS.map(group => {
+                const open = expanded.has(group.id);
+                const rows = group.features.map(feature => {
+                    const route = aiFeatureRoute(feature.id);
+                    const allowed = aiRouteChoicesFor(feature);
+                    // 不可用的选项（音频的 Codex）保留为禁用项：说明原因，也让各下拉框宽度一致。
+                    const options = AI_ROUTE_CHOICES.map(choice => {
+                        const key = aiRouteLabelKey(choice);
+                        const state = !allowed.includes(choice) ? ' disabled' : (choice === route ? ' selected' : '');
+                        return `<option value="${choice}" data-i18n="${key}"${state}>${escapeHtml(i18n(key))}</option>`;
+                    }).join('');
+                    const desc = feature.desc
+                        ? `<div class="ai-route-row-desc" data-i18n="${feature.desc}">${escapeHtml(i18n(feature.desc))}</div>`
+                        : '';
+                    const title = escapeHtml(i18n(feature.label)).replace(/"/g, '&quot;');
+                    return `
+                        <div class="ai-route-row">
+                            <div class="ai-route-row-text">
+                                <div class="ai-route-row-label" data-i18n="${feature.label}">${escapeHtml(i18n(feature.label))}</div>
+                                ${desc}
+                            </div>
+                            <select class="ai-route-select" data-feature="${feature.id}" onchange="setAiFeatureRoute('${feature.id}', this.value)"
+                                title="${title}" aria-label="${title}" data-i18n-title="${feature.label}">${options}</select>
+                        </div>`;
+                }).join('');
+                return `
+                    <div class="ai-route-group${open ? ' expanded' : ''}" data-group="${group.id}">
+                        <div class="setting-item" role="button" tabindex="0" aria-expanded="${open ? 'true' : 'false'}"
+                            onclick="toggleAiRouteGroup('${group.id}')"
+                            onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAiRouteGroup('${group.id}');}">
+                            <div class="setting-item-left">
+                                <div class="setting-item-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${group.icon}</svg>
+                                </div>
+                                <div>
+                                    <div class="setting-item-label" data-i18n="${group.label}">${escapeHtml(i18n(group.label))}</div>
+                                    <div class="setting-item-desc ai-route-summary">${aiRouteGroupSummaryHtml(group)}</div>
+                                </div>
+                            </div>
+                            <span class="settings-item-arrow${open ? ' expanded' : ''}">›</span>
+                        </div>
+                        <div class="ai-route-panel" style="display:${open ? 'block' : 'none'};">${rows}</div>
+                    </div>`;
+            }).join('');
+            const total = document.getElementById('aiRouteTotalSummary');
+            if (total) total.innerHTML = aiRouteTotalSummaryHtml();
+        }
+
+        // 模块折叠时的总摘要：各 API 被多少个功能使用。
+        function aiRouteTotalSummaryHtml() {
+            const counts = {};
+            AI_ROUTE_GROUPS.forEach(group => group.features.forEach(feature => {
+                const route = aiFeatureRoute(feature.id);
+                counts[route] = (counts[route] || 0) + 1;
+            }));
+            let html = AI_ROUTE_CHOICES.filter(route => counts[route]).map(route => {
+                const key = aiRouteLabelKey(route);
+                return `<span data-i18n="${key}">${escapeHtml(i18n(key))}</span> ${counts[route]}`;
+            }).join(' · ');
+            if (counts.codex && !appData.settings?.codexEnabled) {
+                html += ` · <span data-i18n="ai_route_codex_off">${escapeHtml(i18n('ai_route_codex_off'))}</span>`;
+            }
+            return html;
+        }
+
+        function toggleAiRouteSettings() {
+            const body = document.getElementById('aiRouteBody');
+            if (!body) return;
+            const open = body.style.display === 'none';
+            body.style.display = open ? 'block' : 'none';
+            document.getElementById('aiRouteArrow')?.classList.toggle('expanded', open);
+            document.getElementById('aiRouteEntry')?.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+
+        // 只刷新折叠摘要，不重建下拉框，避免打断正在操作的选择。
+        function refreshAiRouteSummaries() {
+            const total = document.getElementById('aiRouteTotalSummary');
+            if (total) total.innerHTML = aiRouteTotalSummaryHtml();
+            AI_ROUTE_GROUPS.forEach(group => {
+                const summary = document.querySelector(`.ai-route-group[data-group="${group.id}"] .ai-route-summary`);
+                if (summary) summary.innerHTML = aiRouteGroupSummaryHtml(group);
+            });
+        }
+
+        function toggleAiRouteGroup(groupId) {
+            const group = document.querySelector(`.ai-route-group[data-group="${groupId}"]`);
+            if (!group) return;
+            const open = !group.classList.contains('expanded');
+            group.classList.toggle('expanded', open);
+            const panel = group.querySelector('.ai-route-panel');
+            if (panel) panel.style.display = open ? 'block' : 'none';
+            group.querySelector('.settings-item-arrow')?.classList.toggle('expanded', open);
+            group.querySelector('.setting-item')?.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+
+        async function setAiFeatureRoute(featureId, route) {
+            const feature = aiRouteFeature(featureId);
+            if (!feature || !aiRouteChoicesFor(feature).includes(route)) return;
+            if (!aiFeatureRoutes) aiFeatureRoutes = normalizeAiFeatureRoutes(null);
+            aiFeatureRoutes[featureId] = route;
+            refreshAiRouteSummaries();
+            try {
+                await saveAiFeatureRoutes();
+                aiFeatureRoutesLoaded = true;
+            } catch (e) {
+                console.error('[API 配置] 保存失败:', e);
+                showToast(i18n('ai_route_save_failed') + (e?.message || e));
+            }
+        }
+
         // ==================== 通用AI调用 ====================
+        // options.feature 决定本次调用走 Codex 网关 / 主 API / 副 API（见上方 API 配置）。
         async function callAI(systemPrompt, messages, options = {}) {
             const s = appData.settings;
+            const route = aiFeatureRoute(options.feature);
 
-            // Codex Gateway 是独立开关：非音频请求只走 Codex，不静默回退到其他模型；
-            // 音频继续严格使用主/备用设置中的 Gemini 配置。
-            if (s.codexEnabled) {
+            // 选择 Codex 网关的功能：非音频请求只走 Codex，不静默回退到其他模型；
+            // 音频继续严格使用主/备用设置中的 Gemini 配置。Codex 未启用时明确报错。
+            if (route === 'codex') {
+                if (!s.codexEnabled) {
+                    throw new Error(i18n('ai_route_codex_disabled', aiFeatureLabel(options.feature)));
+                }
                 if (codexGatewayModule().hasAudioContent(messages)) {
                     return await doConfiguredGeminiAudioRequest(systemPrompt, messages, options);
                 }
                 return await doCodexGatewayRequest(systemPrompt, messages, options);
             }
-            
+
             // 主API配置
             const primaryConfig = {
                 url: s.aiApiUrl,
@@ -19346,7 +19777,15 @@
                 model: s.backupModel,
                 provider: s.backupProvider || ''
             };
-            
+
+            // 选择副 API 的功能只使用备用 API
+            if (route === 'backup') {
+                if (!backupConfig.url || !backupConfig.key) {
+                    throw new Error(i18n('ai_route_backup_missing', aiFeatureLabel(options.feature)));
+                }
+                return await doAIRequest(backupConfig, systemPrompt, messages, options);
+            }
+
             // 先尝试主API
             if (primaryConfig.url && primaryConfig.key) {
                 try {
@@ -19909,12 +20348,12 @@
         const CODEX_OUTLINE_PDF_MAX_PAGES = 48;
         const CODEX_OUTLINE_PDF_MAX_BYTES = 64 * 1024 * 1024;
 
-        function outlinePdfChunkMaxPages(settings) {
-            return settings?.codexEnabled ? CODEX_OUTLINE_PDF_MAX_PAGES : OUTLINE_PDF_CHUNK_MAX_PAGES;
+        function outlinePdfChunkMaxPages(useCodex) {
+            return useCodex ? CODEX_OUTLINE_PDF_MAX_PAGES : OUTLINE_PDF_CHUNK_MAX_PAGES;
         }
 
-        function shouldSkipWholeOutlinePdf(settings, totalPages, bytesLength) {
-            return !!settings?.codexEnabled && (
+        function shouldSkipWholeOutlinePdf(useCodex, totalPages, bytesLength) {
+            return !!useCodex && (
                 Number(totalPages) > CODEX_OUTLINE_PDF_MAX_PAGES ||
                 Number(bytesLength) > CODEX_OUTLINE_PDF_MAX_BYTES
             );
@@ -20060,7 +20499,7 @@
             return [
                 pdfInfo.fingerprint || '', bytesLength, pdfInfo.totalPages || '',
                 chunkMaxPages, currentLang,
-                settings.codexEnabled ? 'codex:on' : 'codex:off',
+                aiFeatureUsesCodex('outline') ? 'codex:on' : 'codex:off',
                 settings.codexGatewayUrl || '', settings.codexModel || '',
                 settings.codexReasoningEffort || '',
                 settings.apiProvider || '', settings.aiModel || '',
@@ -20089,7 +20528,8 @@
                     [{ role: 'user', content: userText }],
                     {
                         maxTokens: 8192,
-                        pdfAttachment: { ...slice, name: `${bookTitle}-${startPage}-${endPage}.pdf` }
+                        pdfAttachment: { ...slice, name: `${bookTitle}-${startPage}-${endPage}.pdf` },
+                        feature: 'outline'
                     }
                 );
                 let chapters;
@@ -20142,10 +20582,10 @@
             const pdfInfo = await inspectBookPdf(bytes);
             const totalPages = pdfInfo.totalPages || Number(book.totalPages) || 1;
             const existingOutline = pdfInfo.outline;
-            const outlineSettings = appData.settings || {};
-            const outlineChunkMaxPages = outlinePdfChunkMaxPages(outlineSettings);
+            const outlineUsesCodex = aiFeatureUsesCodex('outline');
+            const outlineChunkMaxPages = outlinePdfChunkMaxPages(outlineUsesCodex);
             const skipWholeOutlinePdf = shouldSkipWholeOutlinePdf(
-                outlineSettings, totalPages, bytes.length
+                outlineUsesCodex, totalPages, bytes.length
             );
             const draftSignature = outlineDraftSignature(
                 pdfInfo, bytes.length, outlineChunkMaxPages
@@ -20184,7 +20624,8 @@ ${i18n('prompt_outline_gen')}`;
                     }
                     wholeResult = await callAI(i18n('prompt_outline_sys'), [{ role: 'user', content: userText }], {
                         maxTokens: 8192,
-                        pdfAttachment: { bytes, name: bookTitle + '.pdf' }
+                        pdfAttachment: { bytes, name: bookTitle + '.pdf' },
+                        feature: 'outline'
                     });
                     wholeRequestSucceeded = true;
                 } catch (wholeError) {
@@ -20367,7 +20808,8 @@ ${i18n('prompt_outline_gen')}`;
             activeLectureGenerationCount++;
             try {
                 let lectureJob;
-                if (appData.settings?.codexEnabled) {
+                const lectureUsesCodex = aiFeatureUsesCodex('lecture');
+                if (lectureUsesCodex) {
                     const settings = appData.settings;
                     const connection = JSON.stringify([
                         settings.codexGatewayUrl, settings.codexModel, settings.codexReasoningEffort,
@@ -20397,13 +20839,14 @@ ${i18n('prompt_lecture_gen')}`;
                     pdfAttachment = { bytes: slice.bytes, base64: slice.base64, name: `${book.title}_${chapter.title}.pdf` };
                 } catch (e) {
                     console.error('切出章节 PDF 失败:', e);
-                    if (appData.settings?.codexEnabled) throw e;
+                    if (lectureUsesCodex) throw e;
                 }
 
                 const result = await callAI(systemPrompt, [{ role: 'user', content: userMessage }], {
                     maxTokens: 8192,
                     pdfAttachment,
-                    lectureJob
+                    lectureJob,
+                    feature: 'lecture'
                 });
 
                 if (!String(result || '').trim()) throw new Error(i18n('toast_content_gen_failed'));
@@ -22295,7 +22738,8 @@ ${i18n('prompt_lecture_gen')}`;
             }
 
             try {
-                const aiResponse = await callAI(i18n('prompt_math_explain'), [{ role: 'user', content: prompt }]) || i18n('chat_no_ai_answer');
+                const aiResponse = await callAI(i18n('prompt_math_explain'), [{ role: 'user', content: prompt }],
+                    { feature: 'exerciseSelection' }) || i18n('chat_no_ai_answer');
 
                 // 在选中文本下方插入AI回答笔记
                 const qDiv = document.getElementById('exerciseDoingQuestion');
@@ -22428,7 +22872,7 @@ ${i18n('prompt_lecture_gen')}`;
 ${paper.authors ? i18n('prompt_abstract_author') + paper.authors : ''}
 ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
 
-                const result = await callAI(systemPrompt, [{ role: 'user', content: userMessage }], { maxTokens: 8192 });
+                const result = await callAI(systemPrompt, [{ role: 'user', content: userMessage }], { maxTokens: 8192, feature: 'abstract' });
 
                 paper = appData.papers.find(p => p.id === paperId);
                 if (!paper) return;
@@ -22526,6 +22970,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             addChatMessage(container, true, msg);
             input.value = '';
             const renderResponseMath = !!window._wrongAIChatOverride;
+            const chatFeature = window._wrongAIChatOverride ? 'wrongBatchChat' : 'chat';
 
             addTypingIndicator(container);
 
@@ -22564,8 +23009,8 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     if (isFirstUserTurn) window._wrongAIImages = [];
                 }
 
-                const result = await callAI(systemPrompt, recentMessages, { maxTokens: 8192 });
-                
+                const result = await callAI(systemPrompt, recentMessages, { maxTokens: 8192, feature: chatFeature });
+
                 removeTypingIndicator();
                 addChatMessage(container, false, result || i18n('chat_no_answer'), renderResponseMath);
             } catch (err) {
@@ -24874,7 +25319,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                                     } },
                                     { type: 'text', text: partUser }
                                 ]
-                            }], { maxTokens: 8192 });
+                            }], { maxTokens: 8192, feature: 'recording' });
                         } finally {
                             partBlob = null;
                         }
@@ -25066,7 +25511,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
 
             try {
                 let msgContent = [{ role: 'user', content: userMsg }];
-                const aiOptions = { maxTokens: 4096 };
+                const aiOptions = { maxTokens: 4096, feature: material.type === 'image' ? 'classroomPhoto' : 'classroomFile' };
 
                 // For images, include the image
                 if (material.type === 'image' && material.data) {
@@ -26963,7 +27408,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 const dataUrl = await getFileData('exercise_' + sf.id);
                 if (!dataUrl) { showToast(i18n('toast_file_data_lost')); return; }
                 const isImage = sf.type === 'image';
-                await extractExerciseQuestions(folderId, taskId, dataUrl, isImage, sf.mimeType || '');
+                await extractExerciseQuestions(folderId, taskId, dataUrl, isImage, sf.mimeType || '', 'exerciseRegenerate');
                 const regeneratedTask = exFindTask(folderId, taskId);
                 if (regeneratedTask && (regeneratedTask.questions || []).length) {
                     exRememberOpenedQuestion(
@@ -27061,12 +27506,12 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 try {
                     const msgContent = [{ role: 'user', content: exGradingContent(gradingPages, latex) }];
 
-                    const result = await callAI(systemPrompt, msgContent, { maxTokens: 8192, temperature: 0.3 });
+                    const result = await callAI(systemPrompt, msgContent, { maxTokens: 8192, temperature: 0.3, feature: 'gradeAll' });
                     if (!gradingGuard()) continue;
                     if (!result) { failed++; continue; }
 
                     const grading = parseExerciseGradingResponse(result, {
-                        strict: !!(appData.settings && appData.settings.codexEnabled)
+                        strict: aiFeatureUsesCodex('gradeAll')
                     });
                     const score = Math.min(10, Math.max(0, Math.round(grading.score || 0)));
                     const comment = i18n('grade_comment', grading.solution || '-', grading.errors || '-', grading.similar_problem || '-');
@@ -27641,7 +28086,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     renderExerciseFolderContent(folder);
 
                     // Send to AI to extract questions
-                    await extractExerciseQuestions(folder.id, taskId, dataUrl, isImage, file.type);
+                    await extractExerciseQuestions(folder.id, taskId, dataUrl, isImage, file.type, 'exerciseUpload');
 
                 } catch (err) {
                     console.error('上传习题失败:', err);
@@ -27935,10 +28380,10 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     return;
                 }
 
-                let result = await callAI(systemPrompt, msgContent, { maxTokens: 16384, temperature: 0.3 });
+                let result = await callAI(systemPrompt, msgContent, { maxTokens: 16384, temperature: 0.3, feature: 'exerciseBatch' });
                 if (!result) { showToast(i18n('toast_ai_return_parse_fail')); return; }
 
-                result = await autoFixTruncatedArray(result, systemPrompt, msgContent);
+                result = await autoFixTruncatedArray(result, systemPrompt, msgContent, 'exerciseBatch');
 
                 let questions;
                 try {
@@ -28275,7 +28720,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             return questions;
         }
 
-        async function extractExerciseQuestions(folderId, taskId, dataUrl, isImage, mimeType) {
+        async function extractExerciseQuestions(folderId, taskId, dataUrl, isImage, mimeType, aiFeature = 'exerciseUpload') {
             const systemPrompt = i18n('prompt_exercise_parse_system');
 
             try {
@@ -28327,11 +28772,11 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 }
 
                 // 第一次请求，maxTokens 给足
-                let result = await callAI(systemPrompt, msgContent, { maxTokens: 16384, temperature: 0.3 });
+                let result = await callAI(systemPrompt, msgContent, { maxTokens: 16384, temperature: 0.3, feature: aiFeature });
                 if (!result) { showToast(i18n('toast_ai_return_parse_fail')); return; }
 
                 // 检测是否被截断（JSON数组没有以 ] 结尾）
-                result = await autoFixTruncatedArray(result, systemPrompt, msgContent);
+                result = await autoFixTruncatedArray(result, systemPrompt, msgContent, aiFeature);
 
                 // Parse JSON — robust multi-strategy extraction
                 let questions;
@@ -28406,7 +28851,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
         }
 
         // 检测AI返回的JSON数组是否被截断，如果是则请求AI继续输出
-        async function autoFixTruncatedArray(result, systemPrompt, originalMsg) {
+        async function autoFixTruncatedArray(result, systemPrompt, originalMsg, aiFeature) {
             const trimmed = result.trim();
             // 检查是否有完整的 ] 结尾
             if (trimmed.endsWith(']')) return result;
@@ -28425,7 +28870,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     { role: 'assistant', content: result },
                     { role: 'user', content: i18n('prompt_continue_truncated_json') }
                 ];
-                const continuation = await callAI(systemPrompt, continueMsg, { maxTokens: 16384, temperature: 0.3 });
+                const continuation = await callAI(systemPrompt, continueMsg, { maxTokens: 16384, temperature: 0.3, feature: aiFeature });
                 if (continuation) {
                     // 合并：去掉续写中可能重复的 [ 开头
                     let part2 = continuation.trim();
@@ -30850,12 +31295,12 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             try {
                 const msgContent = [{ role: 'user', content: exGradingContent(gradingPages, questionLatex) }];
 
-                const result = await callAI(systemPrompt, msgContent, { maxTokens: 8192, temperature: 0.3 });
+                const result = await callAI(systemPrompt, msgContent, { maxTokens: 8192, temperature: 0.3, feature: 'gradeComplete' });
                 if (!isCurrentCompletion()) return;
                 if (!result) { showToast(i18n('toast_ai_return_parse_fail')); return; }
 
                 const grading = parseExerciseGradingResponse(result, {
-                    strict: !!(appData.settings && appData.settings.codexEnabled)
+                    strict: aiFeatureUsesCodex('gradeComplete')
                 });
                 const score = Math.min(10, Math.max(0, Math.round(grading.score || 0)));
                 const comment = i18n('grade_comment', grading.solution || '-', grading.errors || '-', grading.similar_problem || '-');
@@ -31234,11 +31679,11 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             try {
                 const msgContent = [{ role: 'user', content: exGradingContent(pages, q.latex) }];
 
-                const result = await callAI(systemPrompt, msgContent, { maxTokens: 8192, temperature: 0.3 });
+                const result = await callAI(systemPrompt, msgContent, { maxTokens: 8192, temperature: 0.3, feature: 'wrongRegrade' });
                 if (!result) { showToast(i18n('toast_ai_return_parse_fail')); return; }
 
                 const grading = parseExerciseGradingResponse(result, {
-                    strict: !!(appData.settings && appData.settings.codexEnabled)
+                    strict: aiFeatureUsesCodex('wrongRegrade')
                 });
                 const score = Math.min(10, Math.max(0, Math.round(grading.score || 0)));
                 const comment = i18n('grade_comment', grading.solution || '-', grading.errors || '-', grading.similar_problem || '-');
@@ -32880,7 +33325,8 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     [{ role: 'user', content: [
                         { type: 'image_url', image_url: { url: img } },
                         { type: 'text', text: i18n('prompt_handwriting_recognition_user') }
-                    ] }]
+                    ] }],
+                    { feature: 'nbRecognize' }
                 );
                 nbShowRecognizeResult(text);
             } catch (e) {
@@ -34079,7 +34525,8 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                         [{ role: 'user', content: [
                             { type: 'image_url', image_url: { url: cv.toDataURL('image/jpeg', 0.8) } },
                             { type: 'text', text: i18n('prompt_handwriting_index_user') }
-                        ] }]
+                        ] }],
+                        { feature: 'nbHandwritingIndex' }
                     );
                     c.recognized = { text, sig, at: new Date().toISOString() };
                     nbSnippetCache[pg.id] = undefined;
@@ -34465,7 +34912,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 if (img) content.push({ type: 'image_url', image_url: { url: img } });
                 else if (nbState.content && nbState.content.recognized) task += i18n('prompt_recognized_note', nbState.content.recognized.text);
                 content.push({ type: 'text', text: task });
-                const quizText = await callAI(sys, [{ role: 'user', content }]);
+                const quizText = await callAI(sys, [{ role: 'user', content }], { feature: 'reviewQuiz' });
                 const generatedAt = new Date().toISOString();
                 r.quizzes.push({
                     id: nbUid('quiz'),
@@ -35009,11 +35456,11 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                         { type: 'text', text: i18n('prompt_review_grade_user', quiz.content) }
                     ]
                 }];
-                const result = await callAI(systemPrompt, msgContent, { maxTokens: 4096, temperature: 0.3 });
+                const result = await callAI(systemPrompt, msgContent, { maxTokens: 4096, temperature: 0.3, feature: 'reviewGrade' });
                 if (!result) { showToast(i18n('ai_grading_empty')); if (btn) { btn.disabled = false; btn.textContent = i18n('done'); } return; }
 
                 const grading = parseNotebookReviewGradingResponse(result, {
-                    strict: !!(appData.settings && appData.settings.codexEnabled)
+                    strict: aiFeatureUsesCodex('reviewGrade')
                 });
 
                 const score = Math.min(10, Math.max(0, Math.round(grading.score || 0)));
