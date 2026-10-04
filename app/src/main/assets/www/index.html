@@ -16729,8 +16729,8 @@
             
             try {
                 // 1. 上传元数据 (不包含PDF数据，但保留annotations)
-                await exConfirmImportedDraftUploads();
-                await exRetryPendingDrafts();
+                await exConfirmImportedDraftUploads().catch(e => console.warn('确认习题草稿上传失败:', e));
+                await exRetryPendingDrafts().catch(e => console.warn('补传习题草稿失败:', e));
                 // API 相关设置仅保存本地，不上传
                 const settingsToSync = stripApiSettingsFrom(appData.settings);
                 delete settingsToSync.r2Config;
@@ -30175,10 +30175,12 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
         async function exConfirmImportedDraftUploads() {
             const candidates = [];
             for (const key of exDraftPageKeys()) {
-                const record = await exReadLocalDraft(key);
-                if (exIsDraftSnapshot(record) && record._sync?.pending && record._sync.owner !== exDraftOwner()) {
-                    candidates.push({ key, record });
-                }
+                try {
+                    const record = await exReadLocalDraft(key);
+                    if (exIsDraftSnapshot(record) && record._sync?.pending && record._sync.owner !== exDraftOwner()) {
+                        candidates.push({ key, record });
+                    }
+                } catch (e) { console.warn('读取待确认习题草稿失败:', key, e); }
             }
             if (!candidates.length || !confirm(i18n('exercise_draft_upload_confirm', candidates.length))) return;
             for (const { key, record } of candidates) await exPublishDraftSnapshot(key, record, Promise.resolve(true), true);
