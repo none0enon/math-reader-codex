@@ -24201,7 +24201,11 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;`;
                 const body = document.createElement('div');
                 body.className = 'lecture-body';
-                body.style.cssText = 'display:flow-root;padding:0;font-size:22px;line-height:1.8;';
+                // html2canvas places each word at its DOM position but paints it with canvas
+                // text metrics, which run wider than the DOM for system UI fonts, so Latin words
+                // swallow the spaces and justified lines spill past the margin. A non-zero
+                // letter-spacing makes it place every glyph from the DOM layout instead.
+                body.style.cssText = 'display:flow-root;padding:0;font-size:22px;line-height:1.8;letter-spacing:0.01px;';
                 body.innerHTML = renderChatMarkdownLatex(content);
                 container.appendChild(body);
                 document.body.appendChild(container);
