@@ -24198,14 +24198,20 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 container.style.cssText = `position:fixed;left:-99999px;top:0;width:${renderWidth}px;
                     background:#fff;color:#1a1a1a;pointer-events:none;
                     --accent:#000;--bg-secondary:#fff;
-                    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;`;
+                    font-family:Arial,Helvetica,sans-serif;`;
                 const body = document.createElement('div');
                 body.className = 'lecture-body';
-                body.style.cssText = 'display:flow-root;padding:0;font-size:22px;line-height:1.8;';
+                body.style.cssText = 'display:flow-root;padding:0;font-size:22px;line-height:1.8;overflow-wrap:anywhere;';
                 body.innerHTML = renderChatMarkdownLatex(content);
                 container.appendChild(body);
                 document.body.appendChild(container);
                 renderLectureMath(body);
+                // html2canvas paints words at DOM-measured positions. Its iOS system-font
+                // substitution changes their widths and consumes the spaces between them.
+                // Use the same explicit font for layout and canvas, without justification.
+                body.querySelectorAll('p, li, h1, h2, h3').forEach(el => {
+                    el.style.textAlign = 'left';
+                });
                 body.querySelectorAll('.katex').forEach(el => {
                     el.style.display = 'inline-block';
                     el.style.whiteSpace = 'nowrap';
@@ -24234,9 +24240,27 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
 
                 // Fit wide equations before measuring the page boundaries.
                 body.querySelectorAll('.katex').forEach(el => {
-                    const width = el.getBoundingClientRect().width;
-                    if (width > renderWidth) {
-                        el.style.fontSize = (parseFloat(getComputedStyle(el).fontSize) * renderWidth / width) + 'px';
+                    const block = el.closest('.latex-display, p, li, h1, h2, h3') || body;
+                    const style = getComputedStyle(block);
+                    // Lists and nested blocks have less room than the full sheet.
+                    const availableWidth = Math.min(renderWidth, block.clientWidth
+                        - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight));
+                    if (availableWidth <= 0) return;
+                    const math = el.querySelector('.katex-html');
+                    const tag = math && math.querySelector('.tag');
+                    if (tag) {
+                        // KaTeX positions equation numbers absolutely; reserve room for them
+                        // before measuring an otherwise shrink-wrapped display formula.
+                        const tagSpace = tag.getBoundingClientRect().width
+                            / parseFloat(getComputedStyle(el).fontSize) + 0.5;
+                        math.style.padding = `0 ${tagSpace}em`;
+                    }
+                    for (let attempt = 0; attempt < 3; attempt++) {
+                        const width = Math.max(el.getBoundingClientRect().width, el.scrollWidth,
+                            math ? math.scrollWidth : 0);
+                        if (width <= availableWidth) break;
+                        el.style.fontSize = (parseFloat(getComputedStyle(el).fontSize)
+                            * (availableWidth - 1) / width) + 'px';
                     }
                 });
                 const slices = getLecturePdfSlices(body, renderHeight);
