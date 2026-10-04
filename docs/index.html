@@ -3938,7 +3938,8 @@
         .lecture-body {
             font-size: inherit;
             line-height: 2;
-            word-wrap: break-word;
+            min-width: 0;
+            overflow-wrap: anywhere;
         }
 
         .lecture-body h1 {
@@ -3962,10 +3963,35 @@
             margin-bottom: 12px;
         }
 
+        .lecture-body h4, .lecture-body h5, .lecture-body h6 {
+            font-size: 1em;
+            margin: 20px 0 12px;
+        }
+
+        .lecture-body hr {
+            border: 0;
+            border-top: 1px solid var(--border-color);
+            margin: 24px 0;
+        }
+
+        .lecture-body pre {
+            max-width: 100%;
+            overflow-x: auto;
+            white-space: pre;
+            padding: 12px;
+            font-size: 0.85em;
+        }
+
+        .lecture-body code { font-family: Consolas, 'Liberation Mono', monospace; }
+
         .lecture-body p {
             margin-bottom: 16px;
             text-align: justify;
         }
+
+        /* Confine an indivisible formula to its text block on narrow readers. */
+        .lecture-body p, .lecture-body ul, .lecture-body ol,
+        .lecture-body :is(h1, h2, h3, h4, h5, h6) { overflow-x: auto; }
 
         .lecture-body li {
             margin-left: 24px;
@@ -3997,6 +4023,12 @@
             font-size: 1.1em;
         }
 
+        /* Keep KaTeX's inline break points instead of breaking inside a base. */
+        .lecture-body .katex:not(.katex-display > .katex) {
+            white-space: normal;
+            overflow-wrap: normal;
+        }
+
         .lecture-body .katex-display {
             margin: 24px 0;
             padding: 16px;
@@ -4008,6 +4040,14 @@
         .lecture-body .katex-display > .katex {
             font-size: 1.15em;
         }
+
+        /* Non-zero spacing makes html2canvas position prose by DOM glyph bounds,
+           avoiding accumulated Canvas/system-font width differences within words. */
+        .lecture-pdf-export { letter-spacing: 0.01px; }
+        .lecture-pdf-export p { text-align: left; }
+        .lecture-pdf-export :is(p, ul, ol, pre, h1, h2, h3, h4, h5, h6) { overflow: visible; }
+        .lecture-pdf-export .katex { letter-spacing: normal; overflow: visible; }
+        .lecture-pdf-export .katex-display { padding: 0; overflow: visible; }
 
         .lecture-footer {
             position: fixed;
@@ -19024,29 +19064,49 @@
                 leftarrow: '←', longleftarrow: '←', gets: '←', Leftarrow: '⇐',
                 leftrightarrow: '↔', Leftrightarrow: '⇔', iff: '⇔'
             };
-            let content = String(text);
+            let content = String(text).replace(/\r\n?/g, '\n');
+            // Protect code before math/Markdown. Tokens cannot collide with source text.
+            let tokenPrefix = '%%MR';
+            while (content.includes(tokenPrefix)) tokenPrefix += 'X';
+            const codeBlocks = [];
+            const codeInlines = [];
+            const sourceLines = content.split('\n');
+            const protectedLines = [];
+            for (let i = 0; i < sourceLines.length; i++) {
+                const fence = sourceLines[i].match(/^ {0,3}(`{3,}|~{3,})[^\n]*$/);
+                if (!fence) { protectedLines.push(sourceLines[i]); continue; }
+                const endFence = new RegExp('^ {0,3}' + fence[1][0] + '{' + fence[1].length + ',}\\s*$');
+                const lines = [];
+                while (++i < sourceLines.length && !endFence.test(sourceLines[i])) lines.push(sourceLines[i]);
+                codeBlocks.push(escapeHtml(lines.join('\n')));
+                protectedLines.push(`${tokenPrefix}CODEBLOCK${codeBlocks.length - 1}%%`);
+            }
+            content = protectedLines.join('\n').replace(/(`+)([^\n]*?)\1(?!`)/g, (match, ticks, code) => {
+                codeInlines.push(escapeHtml(code));
+                return `${tokenPrefix}CODEINLINE${codeInlines.length - 1}%%`;
+            });
             const latexBlocks = [];
             const latexInlines = [];
 
             content = content.replace(/\$\$([\s\S]*?)\$\$/g, (match, p1) => {
                 latexBlocks.push(p1.trim());
-                return `%%LATEXBLOCK${latexBlocks.length - 1}%%`;
+                return `\n\n${tokenPrefix}LATEXBLOCK${latexBlocks.length - 1}%%\n\n`;
             });
 
             // \[...\]（前面不是反斜杠，避免误匹配 aligned 环境里的 \\[2pt]）
             content = content.replace(/(^|[^\\])\\\[([\s\S]*?)\\\]/g, (match, before, p1) => {
                 latexBlocks.push(p1.trim());
-                return `${before}%%LATEXBLOCK${latexBlocks.length - 1}%%`;
+                return `${before}\n\n${tokenPrefix}LATEXBLOCK${latexBlocks.length - 1}%%\n\n`;
             });
 
             content = content.replace(/(^|[^\\])\\\(([\s\S]*?)\\\)/g, (match, before, p1) => {
                 latexInlines.push(p1.trim());
-                return `${before}%%LATEXINLINE${latexInlines.length - 1}%%`;
+                return `${before}${tokenPrefix}LATEXINLINE${latexInlines.length - 1}%%`;
             });
 
             content = content.replace(/\$([^\$\n]+?)\$/g, (match, p1) => {
                 latexInlines.push(p1.trim());
-                return `%%LATEXINLINE${latexInlines.length - 1}%%`;
+                return `${tokenPrefix}LATEXINLINE${latexInlines.length - 1}%%`;
             });
 
             // 富文本展示不受信任的 AI 回复时，先转义公式之外的正文；
@@ -19055,30 +19115,56 @@
 
             content = content.replace(/\\(rightarrow|longrightarrow|to|Rightarrow|Longrightarrow|implies|leftarrow|longleftarrow|gets|Leftarrow|leftrightarrow|Leftrightarrow|iff)\b/g, (match, name) => arrowMap[name]);
 
-            let html = content
-                .replace(/^### (.*$)/gm, '<h3>$1</h3>')
-                .replace(/^## (.*$)/gm, '<h2>$1</h2>')
-                .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+            const inline = line => line
                 .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                .replace(/\*(.*?)\*/g, '<em>$1</em>')
-                .replace(/^- (.*$)/gm, '<li>$1</li>')
-                .replace(/^(\d+)\. (.*$)/gm, '<li>$2</li>')
-                .replace(/\n\n/g, '</p><p>')
-                .replace(/\n/g, '<br>');
-
-            html = html.replace(/%%LATEXBLOCK(\d+)%%/g, (match, idx) => {
-                if (latexBlocks[parseInt(idx)] === undefined) return match;
-                const latex = escapeLatexHtml(latexBlocks[parseInt(idx)]);
-                return `</p><div class="latex-display">$$${latex}$$</div><p>`;
+                .replace(/\*(.*?)\*/g, '<em>$1</em>');
+            const blocks = [];
+            let paragraph = [], list = null;
+            const flushParagraph = () => {
+                if (paragraph.length) blocks.push('<p>' + paragraph.map(inline).join('<br>') + '</p>');
+                paragraph = [];
+            };
+            const flushList = () => {
+                if (list) blocks.push(`<${list.tag}${list.start}>` + list.items.map(item => '<li>' + inline(item) + '</li>').join('') + `</${list.tag}>`);
+                list = null;
+            };
+            const blockToken = new RegExp('^' + tokenPrefix + '(CODEBLOCK|LATEXBLOCK)(\\d+)%%$');
+            for (const line of content.split('\n')) {
+                if (!line.trim()) { flushParagraph(); flushList(); continue; }
+                const heading = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+                const special = line.trim().match(blockToken);
+                const rule = /^ {0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/.test(line);
+                if (heading || special || rule) {
+                    flushParagraph(); flushList();
+                    if (heading) blocks.push(`<h${heading[1].length}>${inline(heading[2])}</h${heading[1].length}>`);
+                    else if (rule) blocks.push('<hr>');
+                    else if (special[1] === 'CODEBLOCK') blocks.push('<pre><code>' + codeBlocks[Number(special[2])] + '</code></pre>');
+                    else blocks.push('<div class="latex-display">$$' + escapeLatexHtml(latexBlocks[Number(special[2])]) + '$$</div>');
+                    continue;
+                }
+                const item = line.match(/^\s*(?:([-+*])\s+|(\d+)[.)]\s+)(.+)$/);
+                if (item) {
+                    flushParagraph();
+                    const tag = item[1] ? 'ul' : 'ol';
+                    if (list && list.tag !== tag) flushList();
+                    if (!list) list = { tag, start: tag === 'ol' ? ` start="${Number(item[2])}"` : '', items: [] };
+                    list.items.push(item[3]);
+                } else if (list && /^\s{2,}/.test(line)) {
+                    list.items[list.items.length - 1] += '<br>' + line.trim();
+                } else {
+                    flushList();
+                    paragraph.push(line);
+                }
+            }
+            flushParagraph(); flushList();
+            let html = blocks.join('\n');
+            // Restore in one pass, so code examples containing delimiters stay literal.
+            html = html.replace(new RegExp(tokenPrefix + '(LATEXINLINE|CODEINLINE)(\\d+)%%', 'g'), (match, type, idx) => {
+                return type === 'CODEINLINE' ? '<code>' + codeInlines[Number(idx)] + '</code>'
+                    : '$' + escapeLatexHtml(latexInlines[Number(idx)]) + '$';
             });
 
-            html = html.replace(/%%LATEXINLINE(\d+)%%/g, (match, idx) => {
-                if (latexInlines[parseInt(idx)] === undefined) return match;
-                const latex = escapeLatexHtml(latexInlines[parseInt(idx)]);
-                return `$${latex}$`;
-            });
-
-            return '<p>' + html + '</p>';
+            return html;
         }
 
         // ==================== 聊天消息：操作按钮 & 选区引用 ====================
@@ -24141,7 +24227,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     bottom: Math.ceil(rect.bottom - origin) + 2
                 });
             };
-            body.querySelectorAll('.katex, .latex-display, h1, h2, h3').forEach(el => addRect(el.getBoundingClientRect()));
+            body.querySelectorAll('.katex, .latex-display, pre, h1, h2, h3, h4, h5, h6, hr').forEach(el => addRect(el.getBoundingClientRect()));
             const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
                 acceptNode: node => node.textContent.trim() && !node.parentElement.closest('.katex')
                     ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
@@ -24200,44 +24286,37 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     --accent:#000;--bg-secondary:#fff;
                     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;`;
                 const body = document.createElement('div');
-                body.className = 'lecture-body';
+                body.className = 'lecture-body lecture-pdf-export';
                 body.style.cssText = 'display:flow-root;padding:0;font-size:22px;line-height:1.8;';
                 body.innerHTML = renderChatMarkdownLatex(content);
                 container.appendChild(body);
                 document.body.appendChild(container);
                 renderLectureMath(body);
-                body.querySelectorAll('.katex').forEach(el => {
-                    el.style.display = 'inline-block';
-                    el.style.whiteSpace = 'nowrap';
-                });
-                body.querySelectorAll('.katex-display').forEach(el => {
-                    el.style.padding = '0';
-                    el.style.overflow = 'visible';
-                });
-
-                // Match the exercise export's iOS font workaround, scoped to this export.
-                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
-                    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-                if (isIOS) {
-                    body.querySelectorAll(`.katex, .katex .mathnormal, .katex .mathit, .katex .mathrm,
-                        .katex .mathbf, .katex .mathbb, .katex .mathcal, .katex .mathfrak, .katex .mathsf,
-                        .katex .mathtt, .katex .mainrm, .katex .amsrm, .katex .textrm, .katex .textit,
-                        .katex .textbf, .katex .textsf, .katex .texttt, .katex .mathdefault,
-                        .katex .mord, .katex .mbin, .katex .mrel, .katex .mopen, .katex .mclose,
-                        .katex .mpunct, .katex .minner, .katex .mop`).forEach(el => {
-                        el.style.setProperty('font-family', "'Times New Roman','STIX Two Math',Georgia,'Noto Serif',serif", 'important');
-                    });
-                }
+                // Preserve KaTeX font families; replacing them changes glyph metrics.
                 // Request fonts through layout before waiting for the new math to settle.
                 body.getBoundingClientRect();
                 if (document.fonts?.ready) await document.fonts.ready;
 
-                // Fit wide equations before measuring the page boundaries.
+                // Keep inline math breakable; only shrink an indivisible base or a
+                // display equation wider than its own paragraph/list content box.
                 body.querySelectorAll('.katex').forEach(el => {
-                    const width = el.getBoundingClientRect().width;
-                    if (width > renderWidth) {
-                        el.style.fontSize = (parseFloat(getComputedStyle(el).fontSize) * renderWidth / width) + 'px';
+                    const parent = el.closest('.katex-display, p, li, h1, h2, h3, h4, h5, h6') || body;
+                    const style = getComputedStyle(parent);
+                    const available = parent.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+                    const math = el.querySelector('.katex-html');
+                    const width = Math.max(math?.scrollWidth || 0,
+                        ...Array.from(math?.querySelectorAll('.base') || [], base => base.getBoundingClientRect().width));
+                    if (available > 0 && width > available) {
+                        el.style.fontSize = (parseFloat(getComputedStyle(el).fontSize) * (available - 1) / width) + 'px';
                     }
+                });
+                // ASCII diagrams keep their columns, scaled to fit rather than clipped.
+                body.querySelectorAll('pre').forEach(el => {
+                    const style = getComputedStyle(el);
+                    const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+                    const width = el.scrollWidth - padding;
+                    const available = el.clientWidth - padding;
+                    if (width > available) el.style.fontSize = (parseFloat(style.fontSize) * (available - 1) / width) + 'px';
                 });
                 const slices = getLecturePdfSlices(body, renderHeight);
                 const pdf = await PDFLib.PDFDocument.create();
