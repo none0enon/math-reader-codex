@@ -6770,7 +6770,7 @@
                 toast_file_data_lost:'文件数据丢失，请重新导入或从云端同步',
                 toast_recovering_abstract:'从云端恢复摘要...',toast_no_abstract_paper:'该论文暂无摘要',
                 toast_lecture_synced:'讲义已同步到云端',toast_abstract_synced:'摘要已同步到云端',
-                toast_exercise_synced:'习题文件已同步到云端',toast_exercise_deleted_cloud:'习题文件已从云端删除',
+                toast_exercise_synced:'习题文件已同步到云端',toast_exercise_sync_failed:'习题文件同步到云端失败：{0}。下次启动时会自动重试',toast_exercise_deleted_cloud:'习题文件已从云端删除',
                 toast_auto_synced:'已自动同步到云端',toast_save_config_first:'请先保存配置',
                 toast_endpoint_https:'Endpoint必须以https://开头',
                 confirm_delete:'确定删除此项目？此操作不可恢复。',confirm_clear_all:'确定清除所有数据？此操作不可恢复。',
@@ -6961,7 +6961,7 @@
                 toast_file_data_lost:'File data lost, re-import or sync from cloud',
                 toast_recovering_abstract:'Recovering abstract from cloud...',toast_no_abstract_paper:'No abstract for this paper',
                 toast_lecture_synced:'Lecture synced to cloud',toast_abstract_synced:'Abstract synced to cloud',
-                toast_exercise_synced:'Exercise files synced to cloud',toast_exercise_deleted_cloud:'Exercise files deleted from cloud',
+                toast_exercise_synced:'Exercise files synced to cloud',toast_exercise_sync_failed:'Failed to sync exercise files to cloud: {0}. It will retry automatically on next launch',toast_exercise_deleted_cloud:'Exercise files deleted from cloud',
                 toast_auto_synced:'Auto-synced to cloud',toast_save_config_first:'Please save config first',
                 toast_endpoint_https:'Endpoint must start with https://',
                 confirm_delete:'Delete this item? This cannot be undone.',confirm_clear_all:'Clear all data? This cannot be undone.',
@@ -7152,7 +7152,7 @@
                 toast_file_data_lost:'Données perdues, réimportez ou synchronisez',
                 toast_recovering_abstract:'Récupération résumé...',toast_no_abstract_paper:'Pas de résumé',
                 toast_lecture_synced:'Cours synchronisé',toast_abstract_synced:'Résumé synchronisé',
-                toast_exercise_synced:'Exercices synchronisés',toast_exercise_deleted_cloud:'Exercices supprimés du cloud',
+                toast_exercise_synced:'Exercices synchronisés',toast_exercise_sync_failed:'Échec de la synchronisation des exercices : {0}. Nouvel essai automatique au prochain lancement',toast_exercise_deleted_cloud:'Exercices supprimés du cloud',
                 toast_auto_synced:'Synchronisé automatiquement',toast_save_config_first:'Enregistrez d\'abord la config',
                 toast_endpoint_https:'Endpoint doit commencer par https://',
                 confirm_delete:'Supprimer ? Irréversible.',confirm_clear_all:'Tout effacer ? Irréversible.',
@@ -14343,6 +14343,8 @@
                 tasks.push({ fileId, action });
             };
             for (const item of (appData.classroomSyncOutbox || [])) add(item?.fileId, item?.action);
+            // 只补传用户本机上传后还没确认进入云端的习题；没有记录的旧本地文件不经此路径发布。
+            for (const fileId of exReadSourceUploadPending()) add(fileId, 'exercise_upload');
             for (const listKey of ['courses', 'seminars']) {
                 for (const folder of (appData.classroom?.[listKey] || [])) {
                     for (const session of (folder.sessions || [])) {
@@ -14781,6 +14783,8 @@
                                     const exData = await getFileData('exercise_' + sf.id).catch(() => null);
                                     if (exData) {
                                         await r2PutObject('exercises/' + sf.id, exData, 'application/octet-stream');
+                                        // 引用它的 metadata 已在上面提交，补传记录可以清除
+                                        exClearSourceUploadPending(sf.id);
                                     }
                                 } catch (e) {
                                     console.warn('上传新习题文件失败:', sf.id, e);
@@ -15823,6 +15827,17 @@
                             contentTs || lectureContentTimestamp(uploaded.chapter));
                     }
                 }
+                // 习题源文件先于引用它的 metadata 提交，其它设备不会看到缺文件的习题。
+                if (action === 'exercise_upload' && fileId) {
+                    if (!exFindSourceFile(fileId)) {
+                        // 已在本机删除：不再上传，也不再保留补传记录。
+                        exClearSourceUploadPending(fileId);
+                        return;
+                    }
+                    const exData = await getFileData('exercise_' + fileId);
+                    if (!exData) throw new Error('Exercise file is missing: ' + fileId);
+                    await r2PutObject('exercises/' + fileId, exData, 'application/octet-stream');
+                }
                 let metadataPublishResult = null;
                 // 所有课堂大对象都必须先完整提交，最后才发布 metadata 索引。
                 if (action === 'recording_upload' && fileId) {
@@ -15850,9 +15865,10 @@
                 } else {
                     const notebookWasDeleted = action === 'notebook_metadata_update' && fileId &&
                         !(appData.notebooks?.items || []).some(notebook => notebook?.id === fileId);
-                    // 删除类任务带着专属发布选项，必须自己提交；其余的完整快照发布可以
+                    // 删除类任务带着专属发布选项，必须自己提交；新上传的习题要确认索引
+                    // 已提交才清除补传记录，也自己提交。其余的完整快照发布可以
                     // 合并到队列中后面的任务，一批变更只同步一次 metadata。
-                    const canDeferPublish = !notebookWasDeleted &&
+                    const canDeferPublish = !notebookWasDeleted && action !== 'exercise_upload' &&
                         !CLASSROOM_DELETE_ACTIONS.includes(action) &&
                         r2PendingSyncQueue.some(task => syncActionPublishesFullMetadata(task.action));
                     if (canDeferPublish) {
@@ -15871,7 +15887,13 @@
                     metadataPublishResult?.casCommitted !== true) {
                     throw new Error(i18n('cloud_metadata_not_committed'));
                 }
-                
+                if (action === 'exercise_upload' && fileId) {
+                    if (metadataPublishResult?.casCommitted !== true) {
+                        throw new Error(i18n('cloud_metadata_not_committed'));
+                    }
+                    exClearSourceUploadPending(fileId);
+                }
+
                 // 如果是上传新文件，同步文件数据
                 if (action === 'upload' && fileId) {
                     const fileData = await getFileData(fileId);
@@ -15918,14 +15940,6 @@
                     const absData = await getFileData(fileId).catch(() => null);
                     if (absData) {
                         await r2PutObject('abstracts/' + fileId, absData, 'text/plain; charset=utf-8');
-                    }
-                }
-
-                // 如果是上传习题文件，同步到云端
-                if (action === 'exercise_upload' && fileId) {
-                    const exData = await getFileData('exercise_' + fileId).catch(() => null);
-                    if (exData) {
-                        await r2PutObject('exercises/' + fileId, exData, 'application/octet-stream');
                     }
                 }
 
@@ -15992,13 +16006,18 @@
                 const retryableClassroomAction = ['recording_upload', 'classroom_upload',
                     'classroom_note_upload', 'classroom_delete', 'classroom_note_delete',
                     'recording_delete', 'classroom_folder_delete',
-                    'lecture_upload', 'abstract_upload',
+                    'lecture_upload', 'abstract_upload', 'exercise_upload',
                     'notebook_close', 'notebook_page_add', 'notebook_page_update',
                     'notebook_page_delete', 'notebook_page_reorder', 'notebook_metadata_update',
                     'notebook_review_add', 'notebook_review_update',
                     'exercise_grading_commit'].includes(action);
-                if (retryableClassroomAction &&
-                    (config.autoSyncEnabled || config.autoSyncOnChange) && Number(attempt || 0) < 8) {
+                const willRetry = retryableClassroomAction &&
+                    (config.autoSyncEnabled || config.autoSyncOnChange) && Number(attempt || 0) < 8;
+                if (action === 'exercise_upload' && !willRetry) {
+                    // 重试用尽时必须让用户看到；补传记录仍保留，下次启动继续上传。
+                    showToast(i18n('toast_exercise_sync_failed', err?.message || err));
+                }
+                if (willRetry) {
                     const key = action + ':' + fileId;
                     if (!r2ClassroomRetryTimers.has(key)) {
                         const nextAttempt = Number(attempt || 0) + 1;
@@ -28436,11 +28455,8 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             if (!files || files.length === 0) return;
             if (!currentExerciseFolder) { showToast(i18n('toast_open_doc_first')); return; }
 
-            const data = getExercisesData();
-            const folder = data.folders.find(f => f.id === currentExerciseFolder.folderId);
-            if (!folder) return;
-
-            const newFileIds = [];
+            const folderId = currentExerciseFolder.folderId;
+            if (!getExercisesData().folders.some(f => f.id === folderId)) return;
 
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
@@ -28457,7 +28473,13 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     // Save to IndexedDB
                     await saveFileData('exercise_' + fileId, dataUrl);
 
-                    newFileIds.push(fileId);
+                    // 读文件、写库以及上一份的 AI 识别期间，云同步可能已替换 exercises；
+                    // 每次都取当前的文件夹对象，新任务才不会挂在旧对象上丢失。
+                    const folder = getExercisesData().folders.find(f => f.id === folderId);
+                    if (!folder) {
+                        try { await deleteFileData('exercise_' + fileId); } catch (e) {}
+                        break;
+                    }
 
                     // Create task
                     const taskId = 'extask_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
@@ -28476,10 +28498,14 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
 
                     folder.tasks.push(task);
                     saveData();
-                    renderExerciseFolderContent(folder);
+                    if (currentExerciseFolder && currentExerciseFolder.folderId === folderId) {
+                        renderExerciseFolderContent(folder);
+                    }
+                    // 只同步本次新上传的习题文件到云端
+                    exQueueSourceUpload(fileId);
 
                     // Send to AI to extract questions
-                    await extractExerciseQuestions(folder.id, taskId, dataUrl, isImage, file.type, 'exerciseUpload');
+                    await extractExerciseQuestions(folderId, taskId, dataUrl, isImage, file.type, 'exerciseUpload');
 
                 } catch (err) {
                     console.error('上传习题失败:', err);
@@ -28489,10 +28515,6 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
 
             e.target.value = '';
             debouncedChatSync();
-            // 只同步本次新上传的习题文件到云端
-            for (const fid of newFileIds) {
-                triggerSyncOnFileChange(fid, 'exercise_upload');
-            }
         }
 
         function readFileAsDataURL(file) {
@@ -28692,9 +28714,8 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             }
             if (Object.keys(groups).length === 0) return;
 
-            const data = getExercisesData();
-            const folder = data.folders.find(f => f.id === currentExerciseFolder.folderId);
-            if (!folder) return;
+            const folderId = currentExerciseFolder.folderId;
+            if (!getExercisesData().folders.some(f => f.id === folderId)) return;
 
             const pdfBytes = batchState.pdfBytes;
             const pageImagesSnapshot = batchState.pageImages.slice();
@@ -28720,6 +28741,12 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     const fileId = 'exfile_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
                     await saveFileData('exercise_' + fileId, slicedDataUrl);
 
+                    // 切分和写库期间云同步可能已替换 exercises，取当前的文件夹对象。
+                    const folder = getExercisesData().folders.find(f => f.id === folderId);
+                    if (!folder) {
+                        try { await deleteFileData('exercise_' + fileId); } catch (e) {}
+                        break;
+                    }
                     const taskId = 'extask_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
                     const task = {
                         id: taskId,
@@ -28730,7 +28757,11 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     };
                     folder.tasks.push(task);
                     saveData();
-                    renderExerciseFolderContent(folder);
+                    if (currentExerciseFolder && currentExerciseFolder.folderId === folderId) {
+                        renderExerciseFolderContent(folder);
+                    }
+                    // 任务已落盘就上传；后面的页面渲染失败也不能漏掉同步。
+                    exQueueSourceUpload(fileId);
 
                     const pageImages = [];
                     for (const p of pages) {
@@ -28743,11 +28774,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                         pageImages.push(...hiRes);
                     }
 
-                    extractExerciseFromImages(folder.id, taskId, pageImages, pages.length);
-
-                    for (const sf of task.sourceFiles) {
-                        triggerSyncOnFileChange(sf.id, 'exercise_upload');
-                    }
+                    extractExerciseFromImages(folderId, taskId, pageImages, pages.length);
                 } catch (err) {
                     console.error(`习题${exIdx}处理失败:`, err);
                     showToast(i18n('batch_processing_failed', exIdx) + err.message);
@@ -29374,6 +29401,53 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
         function exFindTask(folderId, taskId) {
             const folder = getExercisesData().folders.find(f => f.id === folderId);
             return folder && (folder.tasks || []).find(t => t.id === taskId);
+        }
+
+        function exFindSourceFile(fileId) {
+            for (const folder of getExercisesData().folders) {
+                for (const task of (folder.tasks || [])) {
+                    const sourceFile = (task.sourceFiles || []).find(sf => sf && sf.id === fileId);
+                    if (sourceFile) return { folder, task, sourceFile };
+                }
+            }
+            return null;
+        }
+
+        // 用户刚上传、还没确认进入云端的习题源文件 id，只记在本机，不进 metadata。
+        // 应用在上传完成前被关闭时，下次启动据此补传。
+        const EX_PENDING_UPLOADS_KEY = 'mathReaderExercisePendingUploads';
+
+        function exReadSourceUploadPending() {
+            try {
+                const ids = JSON.parse(mrLocalStorage.getItem(EX_PENDING_UPLOADS_KEY) || '[]');
+                return Array.isArray(ids) ? ids.filter(id => typeof id === 'string' && id) : [];
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function exWriteSourceUploadPending(ids) {
+            try {
+                if (ids.length) mrLocalStorage.setItem(EX_PENDING_UPLOADS_KEY, JSON.stringify(ids));
+                else mrLocalStorage.removeItem(EX_PENDING_UPLOADS_KEY);
+            } catch (e) {
+                console.warn('[sync] 习题补传记录保存失败:', e);
+            }
+        }
+
+        function exClearSourceUploadPending(fileId) {
+            const ids = exReadSourceUploadPending();
+            if (ids.includes(fileId)) exWriteSourceUploadPending(ids.filter(id => id !== fileId));
+        }
+
+        // 源文件一写入本机就上传云端，不等 AI 识别题目：识别经 Codex 网关可能排队
+        // 很久，等它结束再同步会让中途退出的上传永远留在本机。
+        function exQueueSourceUpload(fileId) {
+            const config = appData.settings?.r2Config;
+            if (!config?.accessKeyId || (!config.autoSyncEnabled && !config.autoSyncOnChange)) return;
+            const ids = exReadSourceUploadPending();
+            if (!ids.includes(fileId)) exWriteSourceUploadPending([...ids, fileId]);
+            triggerSyncOnFileChange(fileId, 'exercise_upload');
         }
 
         function exLocalPositionKey(taskId) {
