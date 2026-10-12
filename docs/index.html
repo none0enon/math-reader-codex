@@ -28503,8 +28503,6 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     }
                     // Send to AI to extract questions
                     await extractExerciseQuestions(folderId, taskId, dataUrl, isImage, file.type, 'exerciseUpload');
-                    // 这一份 AI 识别结束就同步它的文件和识别结果，不等其余文件识别完
-                    exQueueSourceUpload(fileId);
 
                 } catch (err) {
                     console.error('上传习题失败:', err);
@@ -28770,9 +28768,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                         pageImages.push(...hiRes);
                     }
 
-                    // AI 识别结束后同步这一份习题的文件和识别结果
-                    extractExerciseFromImages(folderId, taskId, pageImages, pages.length)
-                        .finally(() => exQueueSourceUpload(fileId));
+                    extractExerciseFromImages(folderId, taskId, pageImages, pages.length);
                 } catch (err) {
                     console.error(`习题${exIdx}处理失败:`, err);
                     showToast(i18n('batch_processing_failed', exIdx) + err.message);
@@ -28838,6 +28834,8 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 saveData();
                 debouncedChatSync();
                 showToast(i18n('recognized_q', questions.length));
+                // 识别成功后调用文件变更时同步，把这份习题的文件和识别结果传到云端
+                (task.sourceFiles || []).forEach(sf => exQueueSourceUpload(sf.id));
 
                 if (currentExerciseFolder && currentExerciseFolder.folderId === folderId) {
                     renderExerciseFolderContent(folder);
@@ -29237,6 +29235,8 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 saveData();
                 debouncedChatSync();
                 showToast(i18n('recognized_q', questions.length));
+                // 识别成功后调用文件变更时同步，把这份习题的文件和识别结果传到云端
+                (task.sourceFiles || []).forEach(sf => exQueueSourceUpload(sf.id));
 
                 if (currentExerciseFolder && currentExerciseFolder.folderId === folderId) {
                     renderExerciseFolderContent(folder);
@@ -29438,7 +29438,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             if (ids.includes(fileId)) exWriteSourceUploadPending(ids.filter(id => id !== fileId));
         }
 
-        // AI 识别结束后调用：把这份习题文件和识别结果同步到云端（文件变更时同步）。
+        // AI 识别成功后调用：把这份习题文件和识别结果同步到云端（文件变更时同步）。
         function exQueueSourceUpload(fileId) {
             const config = appData.settings?.r2Config;
             if (!config?.accessKeyId || (!config.autoSyncEnabled && !config.autoSyncOnChange)) return;
