@@ -28511,7 +28511,6 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             }
 
             e.target.value = '';
-            debouncedChatSync();
         }
 
         function readFileAsDataURL(file) {
@@ -28774,7 +28773,6 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     showToast(i18n('batch_processing_failed', exIdx) + err.message);
                 }
             }
-            debouncedChatSync();
         }
 
         async function extractExerciseFromImages(folderId, taskId, pageImages, pageCount) {
@@ -28832,10 +28830,11 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 }));
 
                 saveData();
-                debouncedChatSync();
                 showToast(i18n('recognized_q', questions.length));
-                // 识别成功后调用文件变更时同步，把这份习题的文件和识别结果传到云端
-                (task.sourceFiles || []).forEach(sf => exQueueSourceUpload(sf.id));
+                // 识别成功后调用文件变更时同步，把这份习题的文件和识别结果传到云端。
+                // exercise_upload 自己提交 metadata，不再另排一次同步，只弹一次提示。
+                if ((task.sourceFiles || []).length) task.sourceFiles.forEach(sf => exQueueSourceUpload(sf.id));
+                else debouncedChatSync();
 
                 if (currentExerciseFolder && currentExerciseFolder.folderId === folderId) {
                     renderExerciseFolderContent(folder);
@@ -29233,10 +29232,11 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 }));
 
                 saveData();
-                debouncedChatSync();
                 showToast(i18n('recognized_q', questions.length));
-                // 识别成功后调用文件变更时同步，把这份习题的文件和识别结果传到云端
-                (task.sourceFiles || []).forEach(sf => exQueueSourceUpload(sf.id));
+                // 识别成功后调用文件变更时同步，把这份习题的文件和识别结果传到云端。
+                // exercise_upload 自己提交 metadata，不再另排一次同步，只弹一次提示。
+                if ((task.sourceFiles || []).length) task.sourceFiles.forEach(sf => exQueueSourceUpload(sf.id));
+                else debouncedChatSync();
 
                 if (currentExerciseFolder && currentExerciseFolder.folderId === folderId) {
                     renderExerciseFolderContent(folder);
