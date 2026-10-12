@@ -28501,11 +28501,10 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     if (currentExerciseFolder && currentExerciseFolder.folderId === folderId) {
                         renderExerciseFolderContent(folder);
                     }
-                    // 只同步本次新上传的习题文件到云端
-                    exQueueSourceUpload(fileId);
-
                     // Send to AI to extract questions
                     await extractExerciseQuestions(folderId, taskId, dataUrl, isImage, file.type, 'exerciseUpload');
+                    // 这一份 AI 识别结束就同步它的文件和识别结果，不等其余文件识别完
+                    exQueueSourceUpload(fileId);
 
                 } catch (err) {
                     console.error('上传习题失败:', err);
@@ -28760,9 +28759,6 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     if (currentExerciseFolder && currentExerciseFolder.folderId === folderId) {
                         renderExerciseFolderContent(folder);
                     }
-                    // 任务已落盘就上传；后面的页面渲染失败也不能漏掉同步。
-                    exQueueSourceUpload(fileId);
-
                     const pageImages = [];
                     for (const p of pages) {
                         if (pageImagesSnapshot[p - 1]) {
@@ -28774,7 +28770,9 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                         pageImages.push(...hiRes);
                     }
 
-                    extractExerciseFromImages(folderId, taskId, pageImages, pages.length);
+                    // AI 识别结束后同步这一份习题的文件和识别结果
+                    extractExerciseFromImages(folderId, taskId, pageImages, pages.length)
+                        .finally(() => exQueueSourceUpload(fileId));
                 } catch (err) {
                     console.error(`习题${exIdx}处理失败:`, err);
                     showToast(i18n('batch_processing_failed', exIdx) + err.message);
@@ -29440,8 +29438,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             if (ids.includes(fileId)) exWriteSourceUploadPending(ids.filter(id => id !== fileId));
         }
 
-        // 源文件一写入本机就上传云端，不等 AI 识别题目：识别经 Codex 网关可能排队
-        // 很久，等它结束再同步会让中途退出的上传永远留在本机。
+        // AI 识别结束后调用：把这份习题文件和识别结果同步到云端（文件变更时同步）。
         function exQueueSourceUpload(fileId) {
             const config = appData.settings?.r2Config;
             if (!config?.accessKeyId || (!config.autoSyncEnabled && !config.autoSyncOnChange)) return;
