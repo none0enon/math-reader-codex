@@ -20107,7 +20107,7 @@
                     { role: 'system', content: systemPrompt },
                     ...finalMessages
                 ],
-                max_tokens: options.maxTokens || 8192,
+                max_tokens: options.maxTokens || 20000,
                 temperature: options.temperature || 0.7,
                 stream: options.stream || false
             };
@@ -20173,7 +20173,7 @@
         async function doClaudeRequest(config, systemPrompt, messages, options = {}) {
             const body = {
                 model: config.model,
-                max_tokens: options.maxTokens || 8192,
+                max_tokens: options.maxTokens || 20000,
                 temperature: options.temperature != null ? options.temperature : 0.7,
                 messages,
             };
@@ -20235,7 +20235,7 @@
         // - URL: {base}/models/{model}:generateContent?key={key}
         // - 鉴权走 URL 的 key 参数
         // - messages/system 映射到 contents / systemInstruction
-        // - 温度等参数从 options 取（与自定义渠道一致）；maxOutputTokens 默认 8192
+        // - 温度等参数从 options 取（与自定义渠道一致）；maxOutputTokens 默认 20000
         // - 支持 PDF 附件：≤ 18MB 用 inline_data；更大走 Files API
         async function doGeminiRequest(config, systemPrompt, messages, options = {}) {
             // 归一化 base：去掉末尾可能的 /models 或斜杠
@@ -20307,7 +20307,7 @@
                 contents,
                 generationConfig: {
                     temperature: options.temperature != null ? options.temperature : 0.7,
-                    maxOutputTokens: options.maxTokens || 8192
+                    maxOutputTokens: options.maxTokens || 20000
                 }
             };
             if (systemPrompt) {
@@ -20733,7 +20733,7 @@
                     i18n('prompt_outline_chunk_sys', startPage, endPage, totalPages),
                     [{ role: 'user', content: userText }],
                     {
-                        maxTokens: 8192,
+                        maxTokens: 20000,
                         pdfAttachment: { ...slice, name: `${bookTitle}-${startPage}-${endPage}.pdf` },
                         feature: 'outline'
                     }
@@ -20829,7 +20829,7 @@ ${i18n('prompt_outline_gen')}`;
                         throw new Error('OUTLINE_WHOLE_TOKEN_LIMIT_ALREADY_KNOWN');
                     }
                     wholeResult = await callAI(i18n('prompt_outline_sys'), [{ role: 'user', content: userText }], {
-                        maxTokens: 8192,
+                        maxTokens: 20000,
                         pdfAttachment: { bytes, name: bookTitle + '.pdf' },
                         feature: 'outline'
                     });
@@ -21104,7 +21104,7 @@ ${i18n('prompt_lecture_gen')}`;
                 }
 
                 const result = await callAI(systemPrompt, [{ role: 'user', content: userMessage }], {
-                    maxTokens: 8192,
+                    maxTokens: 20000,
                     pdfAttachment,
                     lectureJob,
                     feature: 'lecture'
@@ -23152,7 +23152,7 @@ ${i18n('prompt_lecture_gen')}`;
 ${paper.authors ? i18n('prompt_abstract_author') + paper.authors : ''}
 ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
 
-                const result = await callAI(systemPrompt, [{ role: 'user', content: userMessage }], { maxTokens: 8192, feature: 'abstract' });
+                const result = await callAI(systemPrompt, [{ role: 'user', content: userMessage }], { maxTokens: 20000, feature: 'abstract' });
 
                 paper = appData.papers.find(p => p.id === paperId);
                 if (!paper) return;
@@ -23289,7 +23289,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     if (isFirstUserTurn) window._wrongAIImages = [];
                 }
 
-                const result = await callAI(systemPrompt, recentMessages, { maxTokens: 8192, feature: chatFeature });
+                const result = await callAI(systemPrompt, recentMessages, { maxTokens: 20000, feature: chatFeature });
 
                 removeTypingIndicator();
                 addChatMessage(container, false, result || i18n('chat_no_answer'), renderResponseMath);
@@ -25378,7 +25378,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
         const RECORDING_AI_SEGMENT_MS = 5 * 60 * 1000;
         const RECORDING_AI_SEGMENT_BYTES = 10 * 1024 * 1024;
         const RECORDING_AI_WAV_RATE = 16000;
-        const RECORDING_AI_LONG_MAX_TOKENS = 32768;
+        const RECORDING_AI_LONG_MAX_TOKENS = 20000;
 
         async function _probeAudioDuration(blob) {
             return new Promise((resolve, reject) => {
@@ -25731,7 +25731,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                                     } },
                                     { type: 'text', text: partUser }
                                 ]
-                            }], { maxTokens: 8192, feature: 'recording' });
+                            }], { maxTokens: 20000, feature: 'recording' });
                         } finally {
                             partBlob = null;
                         }
@@ -25923,7 +25923,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
 
             try {
                 let msgContent = [{ role: 'user', content: userMsg }];
-                const aiOptions = { maxTokens: 4096, feature: material.type === 'image' ? 'classroomPhoto' : 'classroomFile' };
+                const aiOptions = { maxTokens: 20000, feature: material.type === 'image' ? 'classroomPhoto' : 'classroomFile' };
 
                 // For images, include the image
                 if (material.type === 'image' && material.data) {
@@ -27918,7 +27918,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 try {
                     const msgContent = [{ role: 'user', content: exGradingContent(gradingPages, latex) }];
 
-                    const result = await callAI(systemPrompt, msgContent, { maxTokens: 8192, temperature: 0.3, feature: 'gradeAll' });
+                    const result = await callAI(systemPrompt, msgContent, { maxTokens: 20000, temperature: 0.3, feature: 'gradeAll' });
                     if (!gradingGuard()) continue;
                     if (!result) { failed++; continue; }
 
@@ -28792,7 +28792,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     return;
                 }
 
-                let result = await callAI(systemPrompt, msgContent, { maxTokens: 16384, temperature: 0.3, feature: 'exerciseBatch' });
+                let result = await callAI(systemPrompt, msgContent, { maxTokens: 20000, temperature: 0.3, feature: 'exerciseBatch' });
                 if (!result) { showToast(i18n('toast_ai_return_parse_fail')); return; }
 
                 result = await autoFixTruncatedArray(result, systemPrompt, msgContent, 'exerciseBatch');
@@ -29187,7 +29187,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 }
 
                 // 第一次请求，maxTokens 给足
-                let result = await callAI(systemPrompt, msgContent, { maxTokens: 16384, temperature: 0.3, feature: aiFeature });
+                let result = await callAI(systemPrompt, msgContent, { maxTokens: 20000, temperature: 0.3, feature: aiFeature });
                 if (!result) { showToast(i18n('toast_ai_return_parse_fail')); return; }
 
                 // 检测是否被截断（JSON数组没有以 ] 结尾）
@@ -29288,7 +29288,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     { role: 'assistant', content: result },
                     { role: 'user', content: i18n('prompt_continue_truncated_json') }
                 ];
-                const continuation = await callAI(systemPrompt, continueMsg, { maxTokens: 16384, temperature: 0.3, feature: aiFeature });
+                const continuation = await callAI(systemPrompt, continueMsg, { maxTokens: 20000, temperature: 0.3, feature: aiFeature });
                 if (continuation) {
                     // 合并：去掉续写中可能重复的 [ 开头
                     let part2 = continuation.trim();
@@ -31759,7 +31759,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             try {
                 const msgContent = [{ role: 'user', content: exGradingContent(gradingPages, questionLatex) }];
 
-                const result = await callAI(systemPrompt, msgContent, { maxTokens: 8192, temperature: 0.3, feature: 'gradeComplete' });
+                const result = await callAI(systemPrompt, msgContent, { maxTokens: 20000, temperature: 0.3, feature: 'gradeComplete' });
                 if (!isCurrentCompletion()) return;
                 if (!result) { showToast(i18n('toast_ai_return_parse_fail')); return; }
 
@@ -32143,7 +32143,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             try {
                 const msgContent = [{ role: 'user', content: exGradingContent(pages, q.latex) }];
 
-                const result = await callAI(systemPrompt, msgContent, { maxTokens: 8192, temperature: 0.3, feature: 'wrongRegrade' });
+                const result = await callAI(systemPrompt, msgContent, { maxTokens: 20000, temperature: 0.3, feature: 'wrongRegrade' });
                 if (!result) { showToast(i18n('toast_ai_return_parse_fail')); return; }
 
                 const grading = parseExerciseGradingResponse(result, {
@@ -35920,7 +35920,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                         { type: 'text', text: i18n('prompt_review_grade_user', quiz.content) }
                     ]
                 }];
-                const result = await callAI(systemPrompt, msgContent, { maxTokens: 4096, temperature: 0.3, feature: 'reviewGrade' });
+                const result = await callAI(systemPrompt, msgContent, { maxTokens: 20000, temperature: 0.3, feature: 'reviewGrade' });
                 if (!result) { showToast(i18n('ai_grading_empty')); if (btn) { btn.disabled = false; btn.textContent = i18n('done'); } return; }
 
                 const grading = parseNotebookReviewGradingResponse(result, {
