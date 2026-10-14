@@ -6638,7 +6638,6 @@
     <script src="classroom-storage.js"></script>
     <script src="recording-ai.js"></script>
     <script src="codex-gateway.js"></script>
-    <script src="api-runtime.js"></script>
     <script>
         // ==================== Data Store ====================
         let appData = {
@@ -7651,7 +7650,6 @@
             }
             // 按功能的 API 配置（本机 IndexedDB）；首次使用时以当前调用方式作为初始配置。
             await loadAiFeatureRoutes();
-            configureApiOperations();
             applySettings();
             renderLibrary();
             renderNotesPage();
@@ -7673,7 +7671,7 @@
             initR2AutoSync();
 
             // 自动同步启用时，启动后静默从云端拉取一次最新数据
-            Promise.resolve(autoSyncFromR2OnStartup()).catch(console.error).finally(() => ApiRuntime.resume().catch(console.error));
+            autoSyncFromR2OnStartup();
             // “变更时同步”也必须在重启后恢复未提交正文和持久删除 outbox。
             resumePendingClassroomSync();
 
@@ -11938,17 +11936,6 @@
         });
 
         async function performSearch(query) {
-            const searchDocId = currentDoc?.id;
-            if (searchDocId) {
-                for (const key of await listFileKeys()) {
-                    const prefix = '__api_ocr__:' + searchDocId + ':';
-                    if (!String(key).startsWith(prefix)) continue;
-                    const value = await getFileData(key);
-                    if (currentDoc?.id !== searchDocId) return;
-                    if (value) ocrTextCache[Number(key.slice(prefix.length))] = value;
-                }
-            }
-
             if (!pdfDoc || !query || isSearching) return;
             
             isSearching = true;
@@ -12189,8 +12176,6 @@
                 return;
             }
             
-            const sourcePdf = pdfDoc;
-            const docId = currentDoc.id;
             const ocrBtn = document.getElementById('searchOcrBtn');
             ocrBtn.classList.add('loading');
             ocrBtn.textContent = i18n('ocr_searching');
@@ -12202,10 +12187,10 @@
                 const pagesToOCR = penMode ? [currentPage] : getVisiblePageNumbers();
                 
                 for (const pageNum of pagesToOCR) {
-                    if (await getFileData('__api_ocr__:' + docId + ':' + pageNum)) continue; // Skip if already OCR'd
+                    if (ocrTextCache[pageNum]) continue; // Skip if already OCR'd
                     
                     // Render page to image
-                    const page = await sourcePdf.getPage(pageNum);
+                    const page = await pdfDoc.getPage(pageNum);
                     const scale = 1.5; // Higher scale for better OCR
                     const viewport = page.getViewport({ scale });
                     
@@ -12227,17 +12212,18 @@
                         ]
                     }];
                     
-                    const args = [docId, pageNum, messages];
-                    if (!aiFeatureUsesCodex('ocr')) await runApiOperation('ocr', [docId, pageNum], args);
-                    else await completePageOCR(...args);
-                    canvas.width = 0; canvas.height = 0;
-
+                    const ocrText = await callAI(i18n('prompt_ocr'), messages, { feature: 'ocr' }) || '';
+                    
+                    ocrTextCache[pageNum] = {
+                        text: ocrText,
+                        timestamp: Date.now()
+                    };
                 }
                 
                 showToast(i18n('toast_ocr_done'));
                 
                 // Re-run search with OCR data
-                if (currentDoc?.id === docId) await performSearch(query);
+                await performSearch(query);
                 
             } catch (err) {
                 console.error('OCR error:', err);
@@ -12246,13 +12232,6 @@
                 ocrBtn.classList.remove('loading');
                 ocrBtn.textContent = i18n('ocr_search');
             }
-        }
-
-        async function completePageOCR(docId, pageNum, messages, apiTask) {
-            const text = await callAI(i18n('prompt_ocr'), messages, { feature: 'ocr', apiTask });
-            const value = { text, timestamp: Date.now() };
-            await saveFileData('__api_ocr__:' + docId + ':' + pageNum, value);
-            if (currentDoc?.id === docId) ocrTextCache[pageNum] = value;
         }
 
         function getVisiblePageNumbers() {
@@ -12536,7 +12515,6 @@
                 isPaperAbstract: true,
                 paperId: paperId
             };
-            void renderApiSelectionNotes(apiSelectionTarget(), content.querySelector('.lecture-body')).catch(console.error);
 
             // 初始化canvas
             setTimeout(() => {
@@ -13745,6 +13723,12 @@
             return i18n('prompt_explain_selected_math', selectedText);
         }
 
+        async function requestTextSelectionAI(selectedText, userDesc) {
+            const prompt = buildSelectionAskPrompt(selectedText, userDesc);
+            return await callAI(i18n('prompt_math_explain'), [{ role: 'user', content: prompt }],
+                { feature: 'lectureSelection' }) || i18n('chat_no_ai_answer');
+        }
+
         // 阅读页套索始终发送截图；讲义选中文字仍单独复用上面的文本请求 helper。
         async function askAIAboutReaderSelection() {
             const sel = einkPendingSelection;
@@ -13770,9 +13754,9 @@
                     { type: 'image_url', image_url: { url: sel.image } },
                     { type: 'text', text: tip }
                 ] }];
-                const args = [docId, sel.page, sel.cx, sel.cy, userDesc, messages];
-                if (!aiFeatureUsesCodex('readerSelection')) await runApiOperation('readerSelection', [docId, sel.page, sel.cx, sel.cy, sel.image, userDesc], args);
-                else await completeReaderSelection(...args);
+                const aiResponse = await callAI(i18n('prompt_math_explain'), messages, { feature: 'readerSelection' })
+                    || i18n('chat_no_ai_answer');
+                addDocAiComment(docId, sel.page, sel.cx, sel.cy, aiResponse, userDesc);
                 showToast(i18n('toast_note_added'));
             } catch (err) {
                 console.error(err);
@@ -13780,23 +13764,17 @@
             }
         }
 
-        async function completeReaderSelection(docId, page, x, y, question, messages, apiTask) {
-            const text = await callAI(i18n('prompt_math_explain'), messages, { feature: 'readerSelection', apiTask });
-            addDocAiComment(docId, page, x, y, text, question, apiTask?.id);
-        }
-
         // 以 note 标注形式保存 AI 评论（ai:true），复用计数圆点 marker + 悬浮框渲染
-        function addDocAiComment(docId, page, x, y, text, question, operationId) {
+        function addDocAiComment(docId, page, x, y, text, question) {
             const doc = ensureDocAnnotations(docId);
             if (!doc) return;
-            if (operationId && doc.annotations.some(note => note.apiOperationId === operationId)) return;
             doc.annotations.push({
-                apiOperationId: operationId, page, type: 'note', ai: true, x, y, text,
+                page, type: 'note', ai: true, x, y, text,
                 question: question || '',
                 createdAt: new Date().toISOString()
             });
             doc.annotationsUpdatedAt = Date.now();
-            if (!saveData()) throw new Error(i18n('storage_save_failed'));
+            saveData();
             const pageData = pageElements[page];
             if (pdfDoc && currentDoc && currentDoc.id === docId && pageData && pageData.rendered) {
                 refreshPageMarkers(page);
@@ -18966,8 +18944,8 @@
                     if (h.screenshot) { const c = Object.assign({}, h); delete c.screenshot; return c; }
                     return h;
                 });
-                try { if (!saveData()) throw new Error(i18n('storage_save_failed')); }
-                finally { doc.chatHistory = orig; }
+                try { saveData(); } catch (e) { console.error('saveData failed:', e); }
+                doc.chatHistory = orig;
                 // 立即同步到云端防止数据丢失
                 debouncedChatSync(readerChatSyncToasts.get(docId)?.show);
             }
@@ -19457,7 +19435,6 @@
 
             // Update this message and remove all messages after it
             history[index].content = newText.trim();
-            history[index].id = crypto.randomUUID();
             history = history.slice(0, index + 1);
             saveReaderChatHistory(currentDoc.id, history, currentDoc.question);
             renderReaderChatHistory();
@@ -19468,17 +19445,11 @@
 
         async function resendReaderChatFromIndex(userMsgIndex) {
             const currentDoc = readerChatDoc;
-            const sourcePage = currentPage;
             if (!currentDoc) return;
             let history = loadReaderChatHistory(currentDoc.id, currentDoc.question);
 
-            const userMessage = history[userMsgIndex];
-            if (!userMessage || userMessage.role !== 'user') return;
-            userMessage.id ||= crypto.randomUUID();
-            saveReaderChatHistory(currentDoc.id, history, currentDoc.question);
-
             // Build system prompt
-            const notes = getDocAnnotations(currentDoc.id, sourcePage, 'note');
+            const notes = getDocAnnotations(currentDoc.id, currentPage, 'note');
             const notesSummary = notes.map(n => n.text).filter(Boolean).join('; ');
             const systemPrompt = currentDoc.question
                 ? buildWrongChatSystemPrompt(currentDoc)
@@ -19488,8 +19459,8 @@
             if (currentDoc.type === 'pdf') {
                 try {
                     const fullBytes = await loadBookPdfBytes(currentDoc);
-                    const slice = await slicePdfPages(fullBytes, sourcePage, sourcePage);
-                    pdfAttachment = { bytes: slice.bytes, base64: slice.base64, name: `${currentDoc.title}_p${sourcePage}.pdf` };
+                    const slice = await slicePdfPages(fullBytes, currentPage, currentPage);
+                    pdfAttachment = { bytes: slice.bytes, base64: slice.base64, name: `${currentDoc.title}_p${currentPage}.pdf` };
                 } catch (e) { console.error('切出当前页PDF失败:', e); }
             }
 
@@ -19510,10 +19481,6 @@
             container.scrollTop = container.scrollHeight;
 
             try {
-                if (!aiFeatureUsesCodex(chatFeature)) {
-                    await runApiOperation('readerReply', [currentDoc.id, userMessage.id], [currentDoc.id, currentDoc.question || null, userMessage.id, systemPrompt, apiMessages, { pdfAttachment, feature: chatFeature }]);
-                    return;
-                }
                 const result = await callReaderAI(systemPrompt, apiMessages, { pdfAttachment, feature: chatFeature });
                 if (readerChatDoc?.id === currentDoc.id) document.getElementById('readerChatLoading')?.remove();
                 if (result) {
@@ -19601,7 +19568,6 @@
 
         async function sendReaderChatMessage() {
             const currentDoc = readerChatDoc;
-            const sourcePage = currentPage;
             const input = document.getElementById('readerChatInput');
             const message = input.value.trim();
             if (!message || !currentDoc) return;
@@ -19614,7 +19580,7 @@
 
             // Add user message
             let history = loadReaderChatHistory(currentDoc.id, currentDoc.question);
-            const userMsg = { id: crypto.randomUUID(), role: 'user', content: message };
+            const userMsg = { role: 'user', content: message };
             if (quote) userMsg.quote = quote;
             history.push(userMsg);
             saveReaderChatHistory(currentDoc.id, history, currentDoc.question);
@@ -19626,8 +19592,8 @@
             if (currentDoc.type === 'pdf') {
                 try {
                     const fullBytes = await loadBookPdfBytes(currentDoc);
-                    const slice = await slicePdfPages(fullBytes, sourcePage, sourcePage);
-                    pdfAttachment = { bytes: slice.bytes, base64: slice.base64, name: `${currentDoc.title}_p${sourcePage}.pdf` };
+                    const slice = await slicePdfPages(fullBytes, currentPage, currentPage);
+                    pdfAttachment = { bytes: slice.bytes, base64: slice.base64, name: `${currentDoc.title}_p${currentPage}.pdf` };
                 } catch (e) {
                     console.error('切出当前页PDF失败:', e);
                     if (aiFeatureUsesCodex(chatFeature)) {
@@ -19638,7 +19604,7 @@
             }
 
             // Build system prompt with context
-            const notes = getDocAnnotations(currentDoc.id, sourcePage, 'note');
+            const notes = getDocAnnotations(currentDoc.id, currentPage, 'note');
             const notesSummary = notes.map(n => n.text).filter(Boolean).join('; ');
             const systemPrompt = currentDoc.question
                 ? buildWrongChatSystemPrompt(currentDoc)
@@ -19666,10 +19632,6 @@
             container.scrollTop = container.scrollHeight;
 
             try {
-                if (!aiFeatureUsesCodex(chatFeature)) {
-                    await runApiOperation('readerReply', [currentDoc.id, userMsg.id], [currentDoc.id, currentDoc.question || null, userMsg.id, systemPrompt, apiMessages, { pdfAttachment, feature: chatFeature }]);
-                    return;
-                }
                 const result = await callReaderAI(systemPrompt, apiMessages, { pdfAttachment, feature: chatFeature });
                 if (readerChatDoc?.id === currentDoc.id) document.getElementById('readerChatLoading')?.remove();
 
@@ -19698,58 +19660,6 @@
                 saveReaderChatHistory(currentDoc.id, history, currentDoc.question);
                 renderReaderChatHistory(currentDoc.id);
             }
-        }
-
-        async function completeReaderReply(docId, question, userId, systemPrompt, messages, options, apiTask) {
-            const exists = () => loadReaderChatHistory(docId, question).some(m => m.id === userId);
-            if (!exists()) return;
-            try {
-                const result = await callReaderAI(systemPrompt, messages, { ...options, apiTask });
-                const history = loadReaderChatHistory(docId, question);
-                const index = history.findIndex(m => m.id === userId);
-                if (index < 0 || history.some(m => m.apiOperationId === apiTask.id)) return;
-                history.splice(index + 1, 0, { role: 'assistant', content: result, apiOperationId: apiTask.id });
-                saveReaderChatHistory(docId, history, question);
-                if (readerChatDoc?.id === docId) renderReaderChatHistory(docId);
-            } finally {
-                if (readerChatDoc?.id === docId) document.getElementById('readerChatLoading')?.remove();
-            }
-        }
-
-        let aiChatSessionId = 'general';
-        const generalChatSessions = new Map();
-        function generalChatHistory(id = aiChatSessionId) { return generalChatSessions.get(id) || []; }
-        async function loadGeneralChat(id) {
-            if (!generalChatSessions.has(id)) generalChatSessions.set(id, await getFileData('__api_chat__:' + id) || []);
-            return generalChatHistory(id);
-        }
-        async function updateGeneralChat(id, update) {
-            const history = await ApiRuntime.updateRecord('__api_chat__:' + id, old => {
-                const messages = Array.isArray(old) ? old : [];
-                update(messages);
-                return messages;
-            });
-            generalChatSessions.set(id, history);
-            return history;
-        }
-        function renderGeneralChat() {
-            const container = document.getElementById('chatContainer');
-            container.innerHTML = '';
-            const messages = generalChatHistory();
-            if (!messages.length) addChatMessage(container, false, i18n('chat_welcome'));
-            messages.forEach(m => addChatMessage(container, m.role === 'user', m.content, !!m.rich));
-        }
-        async function completeGeneralReply(sessionId, userId, systemPrompt, messages, options, rich, apiTask) {
-            if (!(await loadGeneralChat(sessionId)).some(m => m.id === userId)) return;
-            try {
-                const text = await callAI(systemPrompt, messages, { ...options, apiTask });
-                await updateGeneralChat(sessionId, history => {
-                    const index = history.findIndex(m => m.id === userId);
-                    if (index < 0 || (apiTask && history.some(m => m.apiOperationId === apiTask.id))) return;
-                    history.splice(index + 1, 0, { role: 'assistant', content: text, rich, apiOperationId: apiTask?.id });
-                });
-                if (sessionId === aiChatSessionId) renderGeneralChat();
-            } finally { if (sessionId === aiChatSessionId) removeTypingIndicator(); }
         }
 
         // ==================== API 配置：按功能选择 Codex 网关 / 主 API / 副 API ====================
@@ -20040,111 +19950,6 @@
             }
         }
 
-        function apiIncompleteMessage() {
-            return currentLang === 'zh' ? 'AI 生成尚未完整结束，已保留任务，请重试。' :
-                currentLang === 'fr' ? 'La génération IA est incomplète. La tâche est conservée ; réessayez.' :
-                'AI generation is incomplete. The task has been retained; retry to continue.';
-        }
-
-        async function fetchAIJson(url, init) {
-            // Keep transient transport errors distinct from completed model output.
-            for (let attempt = 0; ; attempt++) {
-                const controller = new AbortController();
-                const timer = setTimeout(() => controller.abort(), 30 * 60 * 1000);
-                try {
-                    const response = await fetch(url, { ...init, signal: controller.signal });
-                    if (!response.ok) {
-                        const text = await response.text().catch(() => '');
-                        const error = new Error(i18n('api_error', response.status, text));
-                        error.status = response.status;
-                        error.retryable = response.status === 429 || response.status >= 500;
-                        throw error;
-                    }
-                    try { return await response.json(); }
-                    catch (_) {
-                        const error = new Error(apiIncompleteMessage());
-                        error.retryable = true;
-                        throw error;
-                    }
-                } catch (error) {
-                    if (error instanceof TypeError || error.name === 'AbortError') error.retryable = true;
-                    if (!error.retryable || attempt >= 2 || navigator.onLine === false) throw error;
-                    await new Promise(resolve => setTimeout(resolve, 1500 * 2 ** attempt));
-                } finally { clearTimeout(timer); }
-            }
-        }
-
-        function completeApiResponse(provider, config, body, send, options) {
-            return ApiRuntime.complete(provider, body, send, {
-                apiTask: options.apiTask,
-                requestIdentity: options.requestIdentity,
-                connection: { url: config.url, key: config.key, model: config.model },
-                incompleteMessage: apiIncompleteMessage(),
-                emptyMessage: i18n('chat_no_ai_answer')
-            });
-        }
-
-        async function runApiOperation(kind, identity, args) {
-            try { return await ApiRuntime.run(kind, identity, args); }
-            catch (error) {
-                console.error('[AI task]', kind, error);
-                showToast(i18n('toast_gen_failed') + error.message);
-                return null;
-            }
-        }
-
-        function configureApiOperations() {
-            ApiRuntime.configure({
-                get: async key => { if (!await ensureFileDB()) throw new Error(i18n('indexeddb_unavailable')); return getFileData(key); },
-                put: saveFileData,
-                remove: async key => { if (!await ensureFileDB()) throw new Error(i18n('indexeddb_unavailable')); return deleteFileData(key); },
-                keys: listFileKeys
-            }, error => showToast(i18n('toast_gen_failed') + error.message));
-            const register = (kind, handler) => ApiRuntime.register(kind, async (args, task) => {
-                const result = await handler(args, task);
-                if (!saveData() || !await exWaitForExercisesDataSaves()) throw new Error(i18n('storage_save_failed'));
-                return result;
-            });
-            register('outline', ([id], task) => generateAIOutline(id, task));
-            register('lecture', ([bookId, chapterId], task) => {
-                const index = appData.lectures?.[bookId]?.chapters?.findIndex(c => c.id === chapterId) ?? -1;
-                if (index >= 0) return generateChapterContent(bookId, index, task);
-            });
-            register('abstract', ([id], task) => generateAbstract(id, task));
-            for (const kind of ['classroom', 'recording']) register(kind, ([id, options], task) => {
-                const found = _findRecordingMaterial(id);
-                if (!found) return;
-                const handler = kind === 'recording' ? generateClassroomRecordingNote : generateClassroomNoteForMaterial;
-                return handler(found.type, found.folder.id, found.session.id, found.index, options, task);
-            });
-            register('exercise', (args, task) => extractExerciseQuestions(...args, task));
-            register('exerciseImages', (args, task) => extractExerciseFromImages(...args, task));
-            register('quiz', ([id, stage, extra, dueAt, createdAt], task) => {
-                const review = nbFindReviewById(id);
-                if (review && review.createdAt === createdAt) return nbGenerateQuiz(review, stage, extra, dueAt, task);
-            });
-            register('readerReply', (args, task) => completeReaderReply(...args, task));
-            register('generalReply', (args, task) => completeGeneralReply(...args, task));
-            register('quizGrade', (args, task) => gradeNotebookReview(...args, task));
-            register('exerciseGrade', (args, task) => gradeExerciseSnapshot(...args, task));
-            register('exerciseGradeAll', (args, task) => gradeExerciseBatch(...args, task));
-            register('wrongRegrade', (args, task) => completeWrongRegrade(...args, task));
-            register('readerSelection', (args, task) => completeReaderSelection(...args, task));
-            register('selectionNote', (args, task) => completeSelectionNote(...args, task));
-            register('ocr', (args, task) => completePageOCR(...args, task));
-            register('nbRecognize', (args, task) => completeNotebookRecognition(...args, task));
-            register('handwriting', ([id], task) => nbBuildHandwritingIndex(id, task));
-            // A persisted flag is not evidence that an old page's Promise survived.
-            for (const review of nbData().reviews) {
-                if (review.status === 'generating') review.genFailed = true;
-            }
-            saveData();
-            window.addEventListener('online', () => void ApiRuntime.resume().catch(console.error));
-            document.addEventListener('visibilitychange', () => {
-                if (document.visibilityState === 'visible') void ApiRuntime.resume().catch(console.error);
-            });
-        }
-
         // ==================== 通用AI调用 ====================
         // options.feature 决定本次调用走 Codex 网关 / 主 API / 副 API（见上方 API 配置）。
         async function callAI(systemPrompt, messages, options = {}) {
@@ -20194,7 +19999,6 @@
                     return result;
                 } catch (e) {
                     console.error('主API调用失败:', e);
-                    if (e.code === 'AI_INCOMPLETE_RESPONSE' || e.code === 'AI_EMPTY_RESPONSE') throw e;
                     // 如果有备用API，尝试备用
                     if (backupConfig.url && backupConfig.key) {
                         showToast(i18n('toast_primary_failed'));
@@ -20203,7 +20007,7 @@
                             return result;
                         } catch (e2) {
                             console.error('备用API也失败:', e2);
-                            throw e2;
+                            throw new Error(i18n('all_apis_failed'));
                         }
                     }
                     throw e;
@@ -20257,15 +20061,19 @@
                 return await doGeminiRequest(config, systemPrompt, messages, options);
             }
 
-            if (config.provider === 'claude' || /anthropic\.com/.test(config.url)) {
-                const claudeMessages = options.pdfAttachment
-                    ? await embedPdfForClaude(messages, options.pdfAttachment) : messages;
-                return doClaudeRequest(config, systemPrompt, claudeMessages, options);
-            }
+            // OpenAI / DeepSeek / Claude / 其他 OpenAI 兼容：用 chat/completions 协议
+            // 这些渠道中只有 Claude 支持原生 PDF，其他需要靠文本预提取兜底
             let finalMessages = messages;
             if (options.pdfAttachment) {
-                const extractedText = await extractPdfTextAsFallback(options.pdfAttachment);
-                finalMessages = injectPdfTextIntoLastUser(messages, extractedText);
+                if (config.provider === 'claude' || /anthropic\.com/.test(config.url)) {
+                    // Claude Messages API: document 块
+                    finalMessages = await embedPdfForClaude(messages, options.pdfAttachment);
+                    return await doClaudeRequest(config, systemPrompt, finalMessages, options);
+                } else {
+                    // OpenAI / DeepSeek / 其他：不支持 PDF，回退文本提取
+                    const extractedText = await extractPdfTextAsFallback(options.pdfAttachment);
+                    finalMessages = injectPdfTextIntoLastUser(messages, extractedText);
+                }
             }
 
             // 把内部统一的 audio 内容块转换为 OpenAI 的 input_audio 格式
@@ -20299,35 +20107,52 @@
                     { role: 'system', content: systemPrompt },
                     ...finalMessages
                 ],
-                max_tokens: 20000,
-                temperature: options.temperature ?? 0.7,
-                stream: false
+                max_tokens: options.maxTokens || 8192,
+                temperature: options.temperature || 0.7,
+                stream: options.stream || false
             };
             
-            return completeApiResponse('openai', config, requestBody, body => fetchAIJson(config.url, {
+            const response = await fetch(config.url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + config.key },
-                body: JSON.stringify(body)
-            }), options);
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + config.key
+                },
+                body: JSON.stringify(requestBody)
+            });
+            
+            if (!response.ok) {
+                const errText = await response.text().catch(() => '');
+                throw new Error(i18n('api_error', response.status, errText));
+            }
+            
+            if (options.stream) {
+                return response;
+            }
+            
+            const data = await response.json();
+            return data.choices?.[0]?.message?.content || null;
         }
 
         // 把 PDF 文本提取，作为"附件文本"拼到 messages 最后一条 user 内容前
         // 用于不支持 PDF 附件的渠道（DeepSeek / 自定义非 Gemini / 纯 OpenAI 普通模型）
         async function extractPdfTextAsFallback(pdfAttachment) {
-            const pdf = await pdfjsLib.getDocument({ data: pdfAttachment.bytes.slice(0) }).promise;
+            const bytes = pdfAttachment.bytes;
             try {
+                const pdf = await pdfjsLib.getDocument({ data: bytes.slice(0) }).promise;
                 const parts = [];
-                let hasText = false;
-                for (let i = 1; i <= pdf.numPages; i++) {
+                const n = pdf.numPages;
+                for (let i = 1; i <= n; i++) {
                     const page = await pdf.getPage(i);
-                    const text = (await page.getTextContent()).items.map(item => item.str).join(' ');
-                    hasText ||= !!text.trim();
-                    parts.push(`--- Page ${i} ---\n${text}`);
-                    page.cleanup();
+                    const tc = await page.getTextContent();
+                    const pageText = tc.items.map(it => it.str).join(' ');
+                    parts.push(`--- Page ${i} ---\n${pageText}`);
                 }
-                if (!hasText) throw new Error(i18n('pdf_text_extraction_failed'));
                 return parts.join('\n\n');
-            } finally { await pdf.destroy(); }
+            } catch (e) {
+                console.error('PDF 文本提取失败:', e);
+                return i18n('pdf_text_extraction_failed');
+            }
         }
 
         function injectPdfTextIntoLastUser(messages, extractedText) {
@@ -20339,34 +20164,21 @@
             const last = out[lastIdx];
             out[lastIdx] = {
                 role: last.role,
-                content: Array.isArray(last.content)
-                    ? [{ type: 'text', text: i18n('attached_pdf_text') + '\n' + extractedText }, ...last.content]
-                    : i18n('attached_pdf_text') + '\n' + extractedText + '\n\n---\n\n' + String(last.content || '')
+                content: i18n('attached_pdf_text') + '\n' + extractedText + '\n\n---\n\n' + String(last.content || '')
             };
             return out;
         }
 
-        // Claude 原生 Messages API（文本、图片和 PDF 使用同一结束状态检查）。
+        // Claude Messages API 封装（仅用于带 PDF 附件的情形）
         async function doClaudeRequest(config, systemPrompt, messages, options = {}) {
-            messages = messages.map(message => ({
-                ...message,
-                content: typeof message.content === 'string' ? message.content : message.content.map(part => {
-                    if (part.type !== 'image_url') return part;
-                    const url = part.image_url?.url || '';
-                    const match = url.match(/^data:([^;,]+);base64,([\s\S]+)$/);
-                    return { type: 'image', source: match
-                        ? { type: 'base64', media_type: match[1], data: match[2] }
-                        : { type: 'url', url } };
-                })
-            }));
             const body = {
                 model: config.model,
-                max_tokens: 20000,
+                max_tokens: options.maxTokens || 8192,
                 temperature: options.temperature != null ? options.temperature : 0.7,
                 messages,
             };
             if (systemPrompt) body.system = systemPrompt;
-            return completeApiResponse('claude', config, body, request => fetchAIJson(config.url, {
+            const response = await fetch(config.url, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -20374,8 +20186,17 @@
                     'anthropic-version': '2023-06-01',
                     'anthropic-dangerous-direct-browser-access': 'true'
                 },
-                body: JSON.stringify(request)
-            }), options);
+                body: JSON.stringify(body)
+            });
+            if (!response.ok) {
+                const errText = await response.text().catch(() => '');
+                throw new Error(i18n('claude_api_error', response.status, errText));
+            }
+            const data = await response.json();
+            if (Array.isArray(data.content)) {
+                return data.content.filter(x => x.type === 'text').map(x => x.text).join('');
+            }
+            return null;
         }
 
         // 把 PDF 附件嵌入到 Claude messages 最后一条 user 消息里（document 块）
@@ -20388,7 +20209,7 @@
                 role: last.role || 'user',
                 content: [
                     { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
-                    ...(Array.isArray(last.content) ? last.content : [{ type: 'text', text: String(last.content || '') }])
+                    { type: 'text', text: String(last.content || '') }
                 ]
             };
             return out;
@@ -20414,12 +20235,9 @@
         // - URL: {base}/models/{model}:generateContent?key={key}
         // - 鉴权走 URL 的 key 参数
         // - messages/system 映射到 contents / systemInstruction
-        // - 温度等参数从 options 取（与自定义渠道一致）；maxOutputTokens 默认 20000
+        // - 温度等参数从 options 取（与自定义渠道一致）；maxOutputTokens 默认 8192
         // - 支持 PDF 附件：≤ 18MB 用 inline_data；更大走 Files API
         async function doGeminiRequest(config, systemPrompt, messages, options = {}) {
-            if (options.apiTask && options.pdfAttachment) options = { ...options,
-                requestIdentity: await ApiRuntime.fingerprint({ systemPrompt, messages, pdf: options.pdfAttachment }) };
-
             // 归一化 base：去掉末尾可能的 /models 或斜杠
             let base = (config.url || '').replace(/\/+$/, '').replace(/\/models$/, '');
             if (!base) throw new Error(i18n('api_url_empty'));
@@ -20489,7 +20307,7 @@
                 contents,
                 generationConfig: {
                     temperature: options.temperature != null ? options.temperature : 0.7,
-                    maxOutputTokens: 20000
+                    maxOutputTokens: options.maxTokens || 8192
                 }
             };
             if (systemPrompt) {
@@ -20497,11 +20315,26 @@
             }
 
             const url = base + '/models/' + encodeURIComponent(modelName) + ':generateContent?key=' + encodeURIComponent(config.key);
-            return completeApiResponse('gemini', config, body, request => fetchAIJson(url, {
+            const response = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(request)
-            }), options);
+                body: JSON.stringify(body)
+            });
+            if (!response.ok) {
+                const errText = await response.text().catch(() => '');
+                throw new Error(i18n('api_error', response.status, errText));
+            }
+            const data = await response.json();
+            const candidate = data.candidates?.[0];
+            const finishReason = candidate?.finishReason;
+            if (finishReason && finishReason !== 'STOP') {
+                console.warn('Gemini finishReason:', finishReason, '— 输出可能被截断');
+            }
+            const parts = candidate?.content?.parts;
+            if (Array.isArray(parts) && parts.length > 0) {
+                return parts.map(p => p.text || '').join('');
+            }
+            return null;
         }
 
         // 构造 Gemini contents，带 PDF。超过 18MB 走 Files API。
@@ -20888,23 +20721,21 @@
             saveData();
         }
 
-        async function generateOutlinePageRange(sourcePdf, userText, bookTitle, totalPages, startPage, endPage, draft, saveDraft, apiTask) {
+        async function generateOutlinePageRange(sourcePdf, userText, bookTitle, totalPages, startPage, endPage, draft, saveDraft) {
             const rangeKey = `${startPage}-${endPage}`;
             const cached = draft.completedRanges.find(item => item.rangeKey === rangeKey);
             if (cached) return cached.chapters;
 
             if (!draft.tokenLimitedRanges.includes(rangeKey)) {
                 try {
-                const slice = apiTask
-                    ? await apiTask.value('pdf:' + rangeKey, () => sliceLoadedPdfPages(sourcePdf, startPage, endPage))
-                    : await sliceLoadedPdfPages(sourcePdf, startPage, endPage);
+                const slice = await sliceLoadedPdfPages(sourcePdf, startPage, endPage);
                 const result = await callAI(
                     i18n('prompt_outline_chunk_sys', startPage, endPage, totalPages),
                     [{ role: 'user', content: userText }],
                     {
-                        maxTokens: 20000,
+                        maxTokens: 8192,
                         pdfAttachment: { ...slice, name: `${bookTitle}-${startPage}-${endPage}.pdf` },
-                        feature: 'outline', apiTask
+                        feature: 'outline'
                     }
                 );
                 let chapters;
@@ -20912,9 +20743,9 @@
                     chapters = parseOutlineChapters(result);
                 } catch (parseError) {
                     console.error('分段大纲 JSON 解析失败:', parseError, result);
-                    throw ApiRuntime.failure('AI_PARSE_INVALID', i18n('toast_ai_return_parse_fail'));
+                    throw new Error(i18n('toast_ai_return_parse_fail'));
                 }
-                if (chapters.length === 0) throw ApiRuntime.failure('AI_PARSE_INVALID', i18n('toast_ai_no_valid_outline'));
+                if (chapters.length === 0) throw new Error(i18n('toast_ai_no_valid_outline'));
                     const normalized = normalizeOutlineChunkChapters(chapters, startPage, endPage);
                     draft.completedRanges.push({ rangeKey, startPage, endPage, chapters: normalized });
                     saveDraft();
@@ -20928,17 +20759,16 @@
 
             const leftEnd = Math.floor((startPage + endPage) / 2);
             const left = await generateOutlinePageRange(
-                sourcePdf, userText, bookTitle, totalPages, startPage, leftEnd, draft, saveDraft, apiTask
+                sourcePdf, userText, bookTitle, totalPages, startPage, leftEnd, draft, saveDraft
             );
             const right = await generateOutlinePageRange(
-                sourcePdf, userText, bookTitle, totalPages, leftEnd + 1, endPage, draft, saveDraft, apiTask
+                sourcePdf, userText, bookTitle, totalPages, leftEnd + 1, endPage, draft, saveDraft
             );
             return [...left, ...right];
         }
 
         // ==================== 生成大纲（Step 1） ====================
-        async function generateAIOutline(bookId, apiTask) {
-            if (!apiTask && !aiFeatureUsesCodex('outline')) return runApiOperation('outline', bookId, [bookId]);
+        async function generateAIOutline(bookId) {
             let book = appData.books.find(b => b.id === bookId);
             if (!book) return;
             if (book.type !== 'pdf') {
@@ -20951,7 +20781,6 @@
             try {
                 bytes = await loadBookPdfBytes(book);
             } catch (e) {
-                if (apiTask) throw e;
                 showToast(i18n('toast_failed') + e.message);
                 return;
             }
@@ -21000,9 +20829,9 @@ ${i18n('prompt_outline_gen')}`;
                         throw new Error('OUTLINE_WHOLE_TOKEN_LIMIT_ALREADY_KNOWN');
                     }
                     wholeResult = await callAI(i18n('prompt_outline_sys'), [{ role: 'user', content: userText }], {
-                        maxTokens: 20000,
+                        maxTokens: 8192,
                         pdfAttachment: { bytes, name: bookTitle + '.pdf' },
-                        feature: 'outline', apiTask
+                        feature: 'outline'
                     });
                     wholeRequestSucceeded = true;
                 } catch (wholeError) {
@@ -21020,8 +20849,8 @@ ${i18n('prompt_outline_gen')}`;
                         chapters = parseOutlineChapters(wholeResult);
                     } catch (parseError) {
                         showToast(i18n('toast_ai_return_parse_fail'));
-                        console.error('Outline JSON 解析失败:', parseError);
-                        throw parseError;
+                        console.error('Outline JSON 解析失败:', parseError, wholeResult);
+                        return;
                     }
                 } else {
                     if (!window.PDFLib) throw new Error(i18n('pdf_lib_not_loaded'));
@@ -21033,7 +20862,7 @@ ${i18n('prompt_outline_gen')}`;
                         const { startPage: chunkStart, endPage: chunkEnd } = ranges[chunkIndex];
                         showToast(i18n('toast_ai_generating_outline_chunk', chunkIndex + 1, ranges.length, chunkStart, chunkEnd));
                         const chunkChapters = await generateOutlinePageRange(
-                            sourcePdf, userText, bookTitle, totalPages, chunkStart, chunkEnd, draft, saveDraft, apiTask
+                            sourcePdf, userText, bookTitle, totalPages, chunkStart, chunkEnd, draft, saveDraft
                         );
                         chapters.push(...chunkChapters);
                     }
@@ -21044,7 +20873,10 @@ ${i18n('prompt_outline_gen')}`;
                 book = appData.books.find(b => b.id === bookId);
                 if (!book) return;
 
-                if (chapters.length === 0) throw ApiRuntime.failure('AI_PARSE_INVALID', i18n('toast_ai_no_valid_outline'));
+                if (chapters.length === 0) {
+                    showToast(i18n('toast_ai_no_valid_outline'));
+                    return;
+                }
 
                 book.aiOutline = {
                     generatedAt: new Date().toISOString(),
@@ -21069,7 +20901,6 @@ ${i18n('prompt_outline_gen')}`;
                 showToast(i18n('toast_outline_generated', chapters.length));
             } catch (e) {
                 console.error('生成大纲失败:', e);
-                if (apiTask) throw e;
                 showToast(i18n('toast_gen_failed') + e.message);
             }
         }
@@ -21201,12 +21032,7 @@ ${i18n('prompt_outline_gen')}`;
             return savedJob?.id && savedJob.connection === lectureJobConnection(chapter) ? savedJob : null;
         }
 
-        async function generateChapterContent(bookId, chapterIndex, apiTask) {
-            if (!apiTask && !aiFeatureUsesCodex('lecture')) {
-                const chapterId = appData.lectures?.[bookId]?.chapters?.[chapterIndex]?.id;
-                if (!chapterId) return;
-                return runApiOperation('lecture', [bookId, chapterId], [bookId, chapterId]);
-            }
+        async function generateChapterContent(bookId, chapterIndex) {
             const book = appData.books.find(b => b.id === bookId);
             let lectureData = appData.lectures?.[bookId];
             if (!book || !lectureData || !lectureData.chapters[chapterIndex]) return;
@@ -21270,20 +21096,18 @@ ${i18n('prompt_lecture_gen')}`;
                 let pdfAttachment = null;
                 try {
                     const fullBytes = await loadBookPdfBytes(book);
-                    const slice = apiTask
-                        ? await apiTask.value('pdf', () => slicePdfPages(fullBytes, chapter.startPage, chapter.endPage))
-                        : await slicePdfPages(fullBytes, chapter.startPage, chapter.endPage);
+                    const slice = await slicePdfPages(fullBytes, chapter.startPage, chapter.endPage);
                     pdfAttachment = { bytes: slice.bytes, base64: slice.base64, name: `${book.title}_${chapter.title}.pdf` };
                 } catch (e) {
                     console.error('切出章节 PDF 失败:', e);
-                    throw e;
+                    if (lectureUsesCodex) throw e;
                 }
 
                 const result = await callAI(systemPrompt, [{ role: 'user', content: userMessage }], {
-                    maxTokens: 20000,
+                    maxTokens: 8192,
                     pdfAttachment,
                     lectureJob,
-                    feature: 'lecture', apiTask
+                    feature: 'lecture'
                 });
 
                 if (!String(result || '').trim()) throw new Error(i18n('toast_content_gen_failed'));
@@ -21342,7 +21166,6 @@ ${i18n('prompt_lecture_gen')}`;
                     displayLectureContent();
                 }
                 renderNotesPage();
-                if (apiTask) throw err;
             } finally {
                 activeLectureChapters.delete(jobStorageKey);
                 lectureGenerationProgress.delete(jobStorageKey);
@@ -21503,7 +21326,6 @@ ${i18n('prompt_lecture_gen')}`;
             // Model/document text is untrusted. Use the same escaping renderer
             // as Q&A and grading, including LaTeX HTML escaping.
             container.innerHTML = '<div class="lecture-body">' + renderChatMarkdownLatex(contentText) + '</div>';
-            void renderApiSelectionNotes(apiSelectionTarget(), container.querySelector('.lecture-body')).catch(console.error);
             
             // 添加绘制canvas
             const lectureBody = container.querySelector('.lecture-body');
@@ -23029,69 +22851,78 @@ ${i18n('prompt_lecture_gen')}`;
             }
         });
 
-        function apiSelectionTarget(exercise = false) {
-            if (exercise) {
-                if (!exDoingState) return null;
-                return ['exercise', exDoingState.folderId, exDoingState.taskId,
-                    exStableQuestionIndex(exDoingState), exDoingState.isWrong];
-            }
-            const v = currentLecture;
-            if (!v) return null;
-            if (v.isPaperAbstract) return ['paper', v.paperId];
-            if (v.isClassroomNote) {
-                const folder = getClassroomFolder(v.classroomType, v.folderId);
-                const note = folder?.sessions?.find(s => s.id === v.sessionId)?.notes?.[v.noteIndex];
-                return note ? ['classroom', v.classroomType, v.folderId, v.sessionId, note.id] : null;
-            }
-            const chapter = appData.lectures?.[v.bookId]?.chapters?.[v.chapterIndex];
-            return chapter ? ['lecture', v.bookId, chapter.id] : null;
-        }
-        function apiNotesKey(target) { return '__api_notes__:' + JSON.stringify(target); }
-        async function renderApiSelectionNotes(target, body) {
-            if (!target || !body) return;
-            const notes = await getFileData(apiNotesKey(target)) || [];
-            if (!body.isConnected || JSON.stringify(apiSelectionTarget(target[0] === 'exercise')) !== JSON.stringify(target)) return;
-            body.querySelectorAll('[data-api-note]').forEach(note => note.remove());
-            for (const note of notes) {
-                const element = document.createElement('div');
-                element.className = 'lecture-note-mark';
-                element.dataset.apiNote = note.id;
-                element.innerHTML = renderChatMarkdownLatex(note.text);
-                const paragraphs = Array.from(body.querySelectorAll('p, li, blockquote, h1, h2, h3, h4'));
-                const after = paragraphs.find(p => !p.closest('[data-api-note]') && p.textContent.includes(note.quote));
-                if (after) after.after(element); else body.appendChild(element);
-                renderLectureMath(element);
-            }
-        }
-        async function completeSelectionNote(target, quote, question, feature, apiTask) {
-            const prompt = feature === 'exerciseSelection' && question
-                ? i18n('prompt_selected_exercise_with_question', quote, question)
-                : buildSelectionAskPrompt(quote, question);
-            const text = await callAI(i18n('prompt_math_explain'), [{ role: 'user', content: prompt }], { feature, apiTask });
-            const id = apiTask?.id || crypto.randomUUID();
-            await ApiRuntime.updateRecord(apiNotesKey(target), old => {
-                const notes = Array.isArray(old) ? old : [];
-                if (!notes.some(n => n.id === id)) notes.push({ id, quote, text });
-                return notes;
-            });
-            const body = target[0] === 'exercise'
-                ? document.querySelector('#exerciseDoingQuestion .lecture-body')
-                : document.querySelector('#lectureViewerContent .lecture-body');
-            await renderApiSelectionNotes(target, body);
-            showToast(i18n('toast_note_added'));
-        }
         async function askAIAboutSelection() {
-            const target = apiSelectionTarget();
-            if (!lectureSelectedText || !target) return;
-            const quote = lectureSelectedText;
-            const question = (document.getElementById('lectureAskInput').value || '').trim();
+            if (!lectureSelectedText) return;
+
+            const savedText = lectureSelectedText;
+            const savedRange = lectureSelectionRange;
+            const userDesc = (document.getElementById('lectureAskInput').value || '').trim();
             hideLectureSelectionMenu();
+
             showToast(i18n('toast_asking_ai'));
-            const args = [target, quote, question, 'lectureSelection'];
+
             try {
-                if (!aiFeatureUsesCodex('lectureSelection')) await runApiOperation('selectionNote', args, args);
-                else await completeSelectionNote(...args);
-            } catch (error) { showToast(i18n('toast_ai_request_failed') + error.message); }
+                const aiResponse = await requestTextSelectionAI(savedText, userDesc);
+
+                insertLectureNote(aiResponse, savedRange);
+                showToast(i18n('toast_note_added'));
+            } catch (err) {
+                console.error(err);
+                showToast(i18n('toast_ai_request_failed') + err.message);
+            }
+        }
+
+        function insertLectureNote(noteText, range) {
+            if (!range) range = lectureSelectionRange;
+            if (!range) return;
+
+            const noteEl = document.createElement('div');
+            noteEl.className = 'lecture-note-mark';
+            // 用和聊天气泡相同的Markdown+LaTeX渲染管线
+            noteEl.innerHTML = renderChatMarkdownLatex(noteText);
+            // KaTeX渲染
+            renderLectureMath(noteEl);
+
+            // 在选中文本后插入笔记 —— 找到range结束处的块级祖先
+            let insertPoint = range.endContainer;
+            const body = document.querySelector('#lectureViewerContent .lecture-body');
+
+            // 找到块级父元素
+            while (insertPoint && insertPoint.nodeType !== 1) {
+                insertPoint = insertPoint.parentNode;
+            }
+            // 向上查找块级元素，但不能超过 lecture-body 自身
+            while (insertPoint && insertPoint !== body && !['P', 'DIV', 'LI', 'BLOCKQUOTE', 'H1', 'H2', 'H3', 'H4'].includes(insertPoint.tagName)) {
+                insertPoint = insertPoint.parentNode;
+            }
+            // 如果走到了 lecture-body 自身，说明选中内容没有被块级元素包裹
+            // 用 range 的结束位置在 body 的子节点中找到最近的兄弟节点作为插入点
+            if (insertPoint === body || !insertPoint) {
+                let node = range.endContainer;
+                while (node && node.parentNode !== body) {
+                    node = node.parentNode;
+                }
+                if (node && node.parentNode === body) {
+                    insertPoint = node;
+                }
+            }
+            // 避免插到overlay容器或lecture-body容器自身之外
+            if (insertPoint && body && !body.contains(insertPoint)) {
+                insertPoint = body.lastElementChild;
+            }
+            // 避免插入到绘制canvas后面
+            if (insertPoint && insertPoint.tagName === 'CANVAS') {
+                insertPoint = insertPoint.previousElementSibling;
+            }
+
+            if (insertPoint && insertPoint.parentNode) {
+                insertPoint.parentNode.insertBefore(noteEl, insertPoint.nextSibling);
+            }
+
+            // 清除状态
+            window.getSelection().removeAllRanges();
+            lectureSelectedText = '';
+            lectureSelectionRange = null;
         }
 
         // ==================== 讲义与书籍联动 ====================
@@ -23171,19 +23002,54 @@ ${i18n('prompt_lecture_gen')}`;
         });
 
         async function askAIAboutExerciseSelection() {
-            const target = apiSelectionTarget(true);
-            if (!exerciseSelectedText || !target) return;
-            const quote = exerciseSelectedText;
-            const question = (document.getElementById('exerciseAskInput').value || '').trim();
+            if (!exerciseSelectedText) return;
+
+            const savedText = exerciseSelectedText;
+            const userDesc = (document.getElementById('exerciseAskInput').value || '').trim();
             hideExerciseSelectionMenu();
+
+            showToast(i18n('toast_asking_ai'));
+
+            let prompt;
+            if (userDesc) {
+                prompt = i18n('prompt_selected_exercise_with_question', savedText, userDesc);
+            } else {
+                prompt = i18n('prompt_explain_selected_math', savedText);
+            }
+
+            try {
+                const aiResponse = await callAI(i18n('prompt_math_explain'), [{ role: 'user', content: prompt }],
+                    { feature: 'exerciseSelection' }) || i18n('chat_no_ai_answer');
+
+                // 在选中文本下方插入AI回答笔记
+                const qDiv = document.getElementById('exerciseDoingQuestion');
+                const noteEl = document.createElement('div');
+                noteEl.className = 'lecture-note-mark';
+                noteEl.innerHTML = renderChatMarkdownLatex(aiResponse);
+                renderLectureMath(noteEl);
+
+                // 找到插入位置：选区结束处的块级祖先之后
+                let insertPoint = exerciseSelectionRange ? exerciseSelectionRange.endContainer : null;
+                while (insertPoint && insertPoint.nodeType !== 1) {
+                    insertPoint = insertPoint.parentNode;
+                }
+                while (insertPoint && insertPoint !== qDiv && !['P', 'DIV', 'LI', 'BLOCKQUOTE', 'H1', 'H2', 'H3', 'H4'].includes(insertPoint.tagName)) {
+                    insertPoint = insertPoint.parentNode;
+                }
+                if (insertPoint === qDiv || !insertPoint) {
+                    qDiv.appendChild(noteEl);
+                } else if (insertPoint && insertPoint.parentNode) {
+                    insertPoint.parentNode.insertBefore(noteEl, insertPoint.nextSibling);
+                }
+
+                showToast(i18n('toast_note_added'));
+            } catch (err) {
+                console.error(err);
+                showToast(i18n('toast_ai_request_failed') + err.message);
+            }
+
             exerciseSelectedText = '';
             exerciseSelectionRange = null;
-            showToast(i18n('toast_asking_ai'));
-            const args = [target, quote, question, 'exerciseSelection'];
-            try {
-                if (!aiFeatureUsesCodex('exerciseSelection')) await runApiOperation('selectionNote', args, args);
-                else await completeSelectionNote(...args);
-            } catch (error) { showToast(i18n('toast_ai_request_failed') + error.message); }
         }
         function openBookFromLecture() {
             if (!currentLecture || currentLecture.isClassroomNote || currentLecture.isPaperAbstract) return;
@@ -23273,8 +23139,7 @@ ${i18n('prompt_lecture_gen')}`;
             }
         }
 
-        async function generateAbstract(paperId, apiTask) {
-            if (!apiTask && !aiFeatureUsesCodex('abstract')) return runApiOperation('abstract', paperId, [paperId]);
+        async function generateAbstract(paperId) {
             let paper = appData.papers.find(p => p.id === paperId);
             if (!paper) return;
 
@@ -23287,15 +23152,13 @@ ${i18n('prompt_lecture_gen')}`;
 ${paper.authors ? i18n('prompt_abstract_author') + paper.authors : ''}
 ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
 
-                const result = await callAI(systemPrompt, [{ role: 'user', content: userMessage }], { maxTokens: 20000, feature: 'abstract', apiTask });
+                const result = await callAI(systemPrompt, [{ role: 'user', content: userMessage }], { maxTokens: 8192, feature: 'abstract' });
 
                 paper = appData.papers.find(p => p.id === paperId);
                 if (!paper) return;
 
                 const abstractText = result || i18n('abstract_gen_failed');
                 await saveAbstractContent(paperId, abstractText);
-                paper = appData.papers.find(p => p.id === paperId);
-                if (!paper) return;
                 paper._abstractCache = abstractText;
                 paper.hasAiAbstract = true;
                 delete paper.aiAbstract;
@@ -23307,16 +23170,15 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 sendNotification(i18n('notification_abstract_done'), paper.title + i18n('abstract_added'));
             } catch (err) {
                 console.error('生成摘要失败:', err);
-                if (apiTask) throw err;
                 showToast(i18n('toast_gen_failed') + err.message);
             }
         }
 
         // ==================== AI Chat (faithful to original) ====================
-        async function showAIChatModal() {
-            aiChatSessionId = 'general';
-            await loadGeneralChat(aiChatSessionId);
-            renderGeneralChat();
+        function showAIChatModal() {
+            const container = document.getElementById('chatContainer');
+            container.innerHTML = '';
+            addChatMessage(container, false, i18n('chat_welcome'));
             showModal('aiChatModal');
             setTimeout(() => document.getElementById('chatInput').focus(), 300);
         }
@@ -23384,48 +23246,53 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             const msg = input.value.trim();
             if (!msg) return;
 
-            const sessionId = aiChatSessionId;
-            const wrong = !!window._wrongAIChatOverride;
-            const wrongImages = window._wrongAIImages;
-            const wrongContext = window._wrongAIContext;
-            const wrongReference = window._wrongAIReference;
-            const persona = wrong ? '' : getAIPersona();
-            const userId = crypto.randomUUID();
-            try { await updateGeneralChat(sessionId, history => history.push({ id: userId, role: 'user', content: msg })); }
-            catch (error) { showToast(i18n('storage_save_failed')); return; }
             const container = document.getElementById('chatContainer');
-            if (sessionId === aiChatSessionId) { addChatMessage(container, true, msg); input.value = ''; }
-            const renderResponseMath = wrong;
-            const chatFeature = wrong ? 'wrongBatchChat' : 'chat';
+            addChatMessage(container, true, msg);
+            input.value = '';
+            const renderResponseMath = !!window._wrongAIChatOverride;
+            const chatFeature = window._wrongAIChatOverride ? 'wrongBatchChat' : 'chat';
 
-            if (sessionId === aiChatSessionId) addTypingIndicator(container);
+            addTypingIndicator(container);
 
             try {
                 // 错题复用阅读问 AI 的提示词，仅普通聊天注入 AI 人设。
-                const basePrompt = wrong
-                    ? buildWrongChatSystemPrompt({ wrongContext, wrongReference })
+                const persona = window._wrongAIChatOverride ? '' : getAIPersona();
+                const basePrompt = window._wrongAIChatOverride
+                    ? buildWrongChatSystemPrompt({ wrongContext: window._wrongAIContext, wrongReference: window._wrongAIReference })
                     : i18n('prompt_chat_base');
 
                 const systemPrompt = persona ? (persona + '\n\n' + basePrompt) : basePrompt;
 
                 // 获取之前的聊天记录作为上下文
-                const chatMessages = generalChatHistory(sessionId).map(({ role, content }) => ({ role, content }));
+                const chatMessages = [];
+                container.querySelectorAll('.chat-message').forEach(el => {
+                    const isUser = el.classList.contains('user');
+                    const rawText = typeof el._rawChatText === 'string'
+                        ? el._rawChatText
+                        : el.querySelector('.chat-bubble')?.textContent;
+                    const text = rawText?.trim();
+                    if (text && !el.id) {
+                        chatMessages.push({ role: isUser ? 'user' : 'assistant', content: text });
+                    }
+                });
+                
                 // 首轮资格按完整对话判断，不能按截断后的窗口重新判定。
                 const isFirstUserTurn = chatMessages.filter(m => m.role === 'user').length === 1;
                 let recentMessages = chatMessages.slice(-10);
-                if (wrong) {
+                if (window._wrongAIChatOverride) {
                     recentMessages = buildReaderChatApiMessages(recentMessages, {
                         question: true,
                         wrongFirstTurnPending: isFirstUserTurn,
-                        wrongImages
+                        wrongImages: window._wrongAIImages
                     });
                     // 手写图片只在首轮发送；题干与解析在系统提示里，每轮都发。
-                    if (isFirstUserTurn && window._wrongAIImages === wrongImages) window._wrongAIImages = [];
+                    if (isFirstUserTurn) window._wrongAIImages = [];
                 }
 
-                const args = [sessionId, userId, systemPrompt, recentMessages, { maxTokens: 20000, feature: chatFeature }, renderResponseMath];
-                if (!aiFeatureUsesCodex(chatFeature)) await runApiOperation('generalReply', [sessionId, userId], args);
-                else await completeGeneralReply(...args);
+                const result = await callAI(systemPrompt, recentMessages, { maxTokens: 8192, feature: chatFeature });
+
+                removeTypingIndicator();
+                addChatMessage(container, false, result || i18n('chat_no_answer'), renderResponseMath);
             } catch (err) {
                 removeTypingIndicator();
                 addChatMessage(container, false, i18n('chat_call_failed') + err.message);
@@ -25455,16 +25322,13 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             if (!content) throw new Error(i18n('ai_no_valid_note_content'));
 
             // AI 调用期间同步可能替换整棵 classroom；只用稳定 id 重新解析活对象。
-            let current = _findRecordingMaterial(options.materialId);
+            const current = _findRecordingMaterial(options.materialId);
             if (!current) throw new Error(i18n('source_deleted_note_not_saved'));
-            const prior = options.operationId && current.session.notes?.find(n => n.apiOperationId === options.operationId);
-            if (prior) return prior;
             const material = current.material;
             const parsed = _parseGeneratedClassroomNote(content,
                 material.ref + ' ' + (options.isRecording ? i18n('rec_note_badge') : i18n('note_default')));
             const note = {
-                id: options.operationId ? 'cnote_' + options.operationId : 'cnote_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
-                apiOperationId: options.operationId,
+                id: 'cnote_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
                 title: parsed.title,
                 subtitles: parsed.subtitles,
                 contentKey: null,
@@ -25486,8 +25350,6 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 sessionTitle: current.session.title
             });
 
-            current = _findRecordingMaterial(options.materialId);
-            if (!current) throw new Error(i18n('source_deleted_note_not_saved'));
             if (!current.session.notes) current.session.notes = [];
             const replaced = options.replaceExisting
                 ? current.session.notes.filter(item => item?.materialId === material.id)
@@ -25497,7 +25359,6 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             }
             current.session.notes.push(note);
             const metadataSaved = saveData();
-            if (!metadataSaved) throw new Error(i18n('storage_save_failed'));
             if (metadataSaved) {
                 await updateClassroomNoteManifest(note.id, {
                     metadataPending: false,
@@ -25517,7 +25378,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
         const RECORDING_AI_SEGMENT_MS = 5 * 60 * 1000;
         const RECORDING_AI_SEGMENT_BYTES = 10 * 1024 * 1024;
         const RECORDING_AI_WAV_RATE = 16000;
-        const RECORDING_AI_LONG_MAX_TOKENS = 20000;
+        const RECORDING_AI_LONG_MAX_TOKENS = 32768;
 
         async function _probeAudioDuration(blob) {
             return new Promise((resolve, reject) => {
@@ -25808,12 +25669,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 Number(material.duration || 0) || Number(idbManifest?.duration || 0));
         }
 
-        async function generateClassroomRecordingNote(type, folderId, sessionId, materialIndex, options = {}, apiTask) {
-            if (!apiTask && !aiFeatureUsesCodex('recording')) {
-                const material = getClassroomFolder(type, folderId)?.sessions?.find(s => s.id === sessionId)?.sourceFolder?.[materialIndex];
-                if (!material) return;
-                return ApiRuntime.run('recording', material.id, [material.id, options]);
-            }
+        async function generateClassroomRecordingNote(type, folderId, sessionId, materialIndex, options = {}) {
             const folder = getClassroomFolder(type, folderId);
             if (!folder) throw new Error(i18n('class_not_found'));
             const session = (folder.sessions || []).find(s => s.id === sessionId);
@@ -25838,50 +25694,47 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                         }
                     },
                     transcribe: async (segment, context) => {
-                        const transcribe = async () => {
-                            if (segment.geminiFile) {
-                                showToast(i18n('rec_processing_long_recording'));
-                                const longSystem = systemPrompt + '\n\n' +
-                                    i18n('prompt_long_recording_file');
-                                return doGeminiRequest(segment.geminiConfig, longSystem, [{
-                                    role: 'user',
-                                    content: [
-                                        { type: 'audio', audio: {
-                                            fileUri: segment.geminiFile.file_uri,
-                                            mimeType: segment.geminiFile.mime_type
-                                        } },
-                                        { type: 'text', text: userMsg }
-                                    ]
-                                }], { maxTokens: RECORDING_AI_LONG_MAX_TOKENS, apiTask, temperature: 0.3 });
-                            }
-                            let partBlob = null;
-                            try {
-                                partBlob = await segment.load();
-                                if (!partBlob?.size) throw new Error(i18n('local_recording_segment_empty'));
-                                const audioMime = (segment.mimeType || partBlob.type || material.mimeType || 'audio/webm')
-                                    .split(';')[0];
-                                const partSystem = systemPrompt + (context.total > 1
-                                    ? i18n('prompt_recording_segment', context.index + 1, context.total)
-                                    : '');
-                                const partUser = userMsg + (context.total > 1
-                                    ? i18n('prompt_local_segment_label', context.index + 1, context.total)
-                                    : '');
-                                return await callAI(partSystem, [{
-                                    role: 'user',
-                                    content: [
-                                        { type: 'audio', audio: {
-                                            blob: partBlob,
-                                            mimeType: audioMime,
-                                            format: audioMime.split('/')[1] || 'webm'
-                                        } },
-                                        { type: 'text', text: partUser }
-                                    ]
-                                }], { maxTokens: 20000, feature: 'recording', apiTask });
-                            } finally {
-                                partBlob = null;
-                            }
-                        };
-                        return apiTask ? apiTask.value('recordingSegment:' + context.index, transcribe) : transcribe();
+                        if (segment.geminiFile) {
+                            showToast(i18n('rec_processing_long_recording'));
+                            const longSystem = systemPrompt + '\n\n' +
+                                i18n('prompt_long_recording_file');
+                            return doGeminiRequest(segment.geminiConfig, longSystem, [{
+                                role: 'user',
+                                content: [
+                                    { type: 'audio', audio: {
+                                        fileUri: segment.geminiFile.file_uri,
+                                        mimeType: segment.geminiFile.mime_type
+                                    } },
+                                    { type: 'text', text: userMsg }
+                                ]
+                            }], { maxTokens: RECORDING_AI_LONG_MAX_TOKENS, temperature: 0.3 });
+                        }
+                        let partBlob = null;
+                        try {
+                            partBlob = await segment.load();
+                            if (!partBlob?.size) throw new Error(i18n('local_recording_segment_empty'));
+                            const audioMime = (segment.mimeType || partBlob.type || material.mimeType || 'audio/webm')
+                                .split(';')[0];
+                            const partSystem = systemPrompt + (context.total > 1
+                                ? i18n('prompt_recording_segment', context.index + 1, context.total)
+                                : '');
+                            const partUser = userMsg + (context.total > 1
+                                ? i18n('prompt_local_segment_label', context.index + 1, context.total)
+                                : '');
+                            return await callAI(partSystem, [{
+                                role: 'user',
+                                content: [
+                                    { type: 'audio', audio: {
+                                        blob: partBlob,
+                                        mimeType: audioMime,
+                                        format: audioMime.split('/')[1] || 'webm'
+                                    } },
+                                    { type: 'text', text: partUser }
+                                ]
+                            }], { maxTokens: 8192, feature: 'recording' });
+                        } finally {
+                            partBlob = null;
+                        }
                     }
                 });
                 let content = job.content;
@@ -25890,7 +25743,6 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 }
                 const note = await _commitGeneratedClassroomNote({
                     materialId,
-                    operationId: apiTask?.id,
                     content,
                     isRecording: true,
                     replaceExisting: !!options.replaceExisting
@@ -26048,12 +25900,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             }
         }
 
-        async function generateClassroomNoteForMaterial(type, folderId, sessionId, materialIndex, options = {}, apiTask) {
-            if (!apiTask && !aiFeatureUsesCodex(getClassroomFolder(type, folderId)?.sessions?.find(s => s.id === sessionId)?.sourceFolder?.[materialIndex]?.type === 'image' ? 'classroomPhoto' : 'classroomFile')) {
-                const material = getClassroomFolder(type, folderId)?.sessions?.find(s => s.id === sessionId)?.sourceFolder?.[materialIndex];
-                if (!material) return;
-                return ApiRuntime.run('classroom', material.id, [material.id, options]);
-            }
+        async function generateClassroomNoteForMaterial(type, folderId, sessionId, materialIndex, options = {}) {
             const folder = getClassroomFolder(type, folderId);
             if (!folder) throw new Error(i18n('class_not_found'));
             const session = (folder.sessions || []).find(s => s.id === sessionId);
@@ -26076,7 +25923,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
 
             try {
                 let msgContent = [{ role: 'user', content: userMsg }];
-                const aiOptions = { maxTokens: 20000, apiTask, feature: material.type === 'image' ? 'classroomPhoto' : 'classroomFile' };
+                const aiOptions = { maxTokens: 4096, feature: material.type === 'image' ? 'classroomPhoto' : 'classroomFile' };
 
                 // For images, include the image
                 if (material.type === 'image' && material.data) {
@@ -26092,7 +25939,6 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 const result = await callAI(systemPrompt, msgContent, aiOptions);
                 const note = await _commitGeneratedClassroomNote({
                     materialId,
-                    operationId: apiTask?.id,
                     content: result,
                     isRecording: false,
                     replaceExisting: !!options.replaceExisting
@@ -26204,7 +26050,6 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             html = html.replace(/%%LATEXINLINE(\d+)%%/g, (m, idx) => `$${latexInlines[parseInt(idx)]}$`);
 
             container.innerHTML = '<div class="lecture-body"><p>' + html + '</p></div>';
-            void renderApiSelectionNotes(apiSelectionTarget(), container.querySelector('.lecture-body')).catch(console.error);
 
             // Add drawing canvas
             const lectureBody = container.querySelector('.lecture-body');
@@ -27045,7 +26890,8 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
         }
 
         // 每道题的评分快照都带单调 token。AI 返回顺序不等于用户操作顺序：
-        // 新的单题完成/书写会立即使旧的“全部评分”快照失效，离开页面不会取消。
+        // 新的单题完成/书写/退出会立即使旧的“全部评分”快照失效。
+        let _exQuestionGradingTokenCounter = 0;
         const _exQuestionGradingTokens = new Map();
         const _exActiveGuardedGradedTransactions = new Set();
 
@@ -27056,11 +26902,9 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
         function exIssueQuestionGradingToken(taskId, stableQuestionIndex) {
             const token = {
                 key: exQuestionGradingKey(taskId, stableQuestionIndex),
-                generation: crypto.randomUUID()
+                generation: ++_exQuestionGradingTokenCounter
             };
             _exQuestionGradingTokens.set(token.key, token.generation);
-            try { mrLocalStorage.setItem('apiGrading:' + token.key, token.generation); }
-            catch (error) { console.warn('Could not persist grading revision', error); }
             // 若旧快照的 IDB 事务还没提交，直接 abort；事务已提交则必然是整套页面原子落盘。
             for (const active of _exActiveGuardedGradedTransactions) {
                 if (!active.guard()) {
@@ -27071,12 +26915,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
         }
 
         function exQuestionGradingGuard(token) {
-            return () => {
-                if (!token) return false;
-                let generation = _exQuestionGradingTokens.get(token.key);
-                try { generation = mrLocalStorage.getItem('apiGrading:' + token.key) || generation; } catch (_) {}
-                return generation === token.generation;
-            };
+            return () => !!token && _exQuestionGradingTokens.get(token.key) === token.generation;
         }
 
         function exStableQuestionIndex(state) {
@@ -27966,15 +27805,24 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 showToast(i18n('toast_file_read_failed'));
                 return;
             }
+            // 清理每道题的IndexedDB缓存与内存缓存（含多页）
+            (task.questions || []).forEach((q, i) => exPurgeQuestionDrawings(taskId, i, q));
+            // 新题集与旧题号不再对应；先清云端旧位置，成功重建后从第一题重新记录。
+            exForgetExercisePosition(folderId, taskId, true);
+            // Clear existing questions
+            task.questions = [];
+            saveData();
+            debouncedChatSync();
+            renderExerciseFolderContent(folder);
             // Re-extract from first source file
             const sf = task.sourceFiles[0];
             try {
                 const dataUrl = await getFileData('exercise_' + sf.id);
                 if (!dataUrl) { showToast(i18n('toast_file_data_lost')); return; }
                 const isImage = sf.type === 'image';
-                const recognized = await extractExerciseQuestions(folderId, taskId, dataUrl, isImage, sf.mimeType || '', 'exerciseRegenerate');
+                await extractExerciseQuestions(folderId, taskId, dataUrl, isImage, sf.mimeType || '', 'exerciseRegenerate');
                 const regeneratedTask = exFindTask(folderId, taskId);
-                if (recognized && regeneratedTask && (regeneratedTask.questions || []).length) {
+                if (regeneratedTask && (regeneratedTask.questions || []).length) {
                     exRememberOpenedQuestion(
                         folderId, taskId, exResolveOpeningQuestionIndex(regeneratedTask, null), true);
                     exFlushPositionSync(folderId, taskId);
@@ -28046,7 +27894,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                         latex: q.latex,
                         allPages,
                         gradingPages,
-                        gradingToken
+                        gradingGuard
                     });
                 }
             }
@@ -28056,20 +27904,13 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 return;
             }
 
-            if (!aiFeatureUsesCodex('gradeAll')) return runApiOperation('exerciseGradeAll', [folderId, taskId, toGrade.map(item => item.gradingToken.generation)], [folderId, taskId, toGrade]);
-            return gradeExerciseBatch(folderId, taskId, toGrade);
-        }
-
-        async function gradeExerciseBatch(folderId, taskId, toGrade, apiTask) {
             const systemPrompt = i18n('prompt_grade_system');
 
             let graded = 0;
             let failed = 0;
-            let lastError;
 
             for (const item of toGrade) {
-                const { index: capturedIndex, questionIdentity, latex, allPages, gradingPages, gradingToken } = item;
-                const gradingGuard = exQuestionGradingGuard(gradingToken);
+                const { index: capturedIndex, questionIdentity, latex, allPages, gradingPages, gradingGuard } = item;
                 if (!gradingGuard()) continue;
                 showToast(i18n('grading_progress', graded + 1, toGrade.length, capturedIndex + 1));
 
@@ -28077,12 +27918,12 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 try {
                     const msgContent = [{ role: 'user', content: exGradingContent(gradingPages, latex) }];
 
-                    const result = await callAI(systemPrompt, msgContent, { maxTokens: 20000, temperature: 0.3, feature: 'gradeAll', apiTask });
+                    const result = await callAI(systemPrompt, msgContent, { maxTokens: 8192, temperature: 0.3, feature: 'gradeAll' });
                     if (!gradingGuard()) continue;
-                    if (!result) throw ApiRuntime.failure('AI_PARSE_INVALID', i18n('toast_ai_return_parse_fail'));
+                    if (!result) { failed++; continue; }
 
                     const grading = parseExerciseGradingResponse(result, {
-                        strict: true
+                        strict: aiFeatureUsesCodex('gradeAll')
                     });
                     const score = Math.min(10, Math.max(0, Math.round(grading.score || 0)));
                     const comment = i18n('grade_comment', grading.solution || '-', grading.errors || '-', grading.similar_problem || '-');
@@ -28098,8 +27939,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                         if (matched >= 0) qIdx = matched;
                     }
                     let currentQ = currentTask.questions[qIdx];
-                    if (!currentQ) continue;
-                    if (apiTask && currentQ.apiGradeOperationId === apiTask.id) { graded++; continue; }
+                    if (!currentQ) throw new Error('Exercise question no longer exists');
                     const storageQuestionIndex = questionIdentity !== undefined && questionIdentity !== null
                         ? questionIdentity
                         : capturedIndex;
@@ -28108,8 +27948,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     if (!gradingGuard()) continue;
                     const pagesSaved = await exSaveGradedPages(
                         `exercise_drawing_${taskId}_${storageQuestionIndex}`, allPages, gradingGuard);
-                    if (!gradingGuard()) continue;
-                    if (!pagesSaved) throw new Error(i18n('storage_save_failed'));
+                    if (!pagesSaved || !gradingGuard()) continue;
 
                     // 页面写入期间也可能发生替换；最后一个 await 后再次获取 canonical 对象。
                     currentData = getExercisesData();
@@ -28121,8 +27960,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                         if (matched >= 0) qIdx = matched;
                     }
                     currentQ = currentTask.questions[qIdx];
-                    if (!currentQ) continue;
-                    if (apiTask && currentQ.apiGradeOperationId === apiTask.id) { graded++; continue; }
+                    if (!currentQ) throw new Error('Exercise question no longer exists');
                     const committedPageCount = Math.max(
                         1,
                         Number(currentQ.pageCount) || 0,
@@ -28134,7 +27972,6 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     gradedCloudCommit = exStageGradedPagesCloudCommit(
                         `exercise_drawing_${taskId}_${storageQuestionIndex}`, allPages.length);
 
-                    currentQ.apiGradeOperationId = apiTask?.id;
                     currentQ.status = 'done';
                     currentQ.score = score;
                     currentQ.userDrawing = allPages[0];
@@ -28171,13 +28008,11 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     exFailGradedPagesCloudCommit(gradedCloudCommit);
                     console.error(`第${capturedIndex + 1}题评分失败:`, err);
                     failed++;
-                    lastError = err;
                 }
             }
 
             const latestFolder = getExercisesData().folders.find(f => f.id === folderId);
-            if (latestFolder && currentExerciseFolder?.folderId === folderId) renderExerciseFolderContent(latestFolder);
-            if (lastError && apiTask) throw lastError;
+            if (latestFolder) renderExerciseFolderContent(latestFolder);
             showToast(i18n('grade_done', graded) + (failed > 0 ? i18n('grade_done_fail', failed) : ''));
         }
 
@@ -28940,87 +28775,252 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             }
         }
 
-        async function extractExerciseFromImages(folderId, taskId, pageImages, pageCount, apiTask) {
-            if (!apiTask && !aiFeatureUsesCodex('exerciseBatch')) return runApiOperation('exerciseImages', [folderId, taskId], [folderId, taskId, pageImages, pageCount]);
+        async function extractExerciseFromImages(folderId, taskId, pageImages, pageCount) {
+            const systemPrompt = i18n('prompt_exercise_parse_system');
+
             try {
-                if (!pageImages.length) throw new Error(i18n('no_page_images'));
-                const questions = await recognizeExercisePages(pageImages.length,
-                    (start, end) => Promise.resolve(pageImages.slice(start - 1, end)), 'exerciseBatch', apiTask);
-                return await commitRecognizedExercise(folderId, taskId, questions, apiTask);
-            } catch (error) {
-                if (apiTask) throw error;
-                showToast(i18n('toast_failed') + error.message);
-            }
-        }
-
-        async function recognizeExercisePages(totalPages, loadImages, feature, apiTask) {
-            const questions = [];
-            let pendingQuestion = '';
-            const batchSize = 8;
-            for (let start = 1; start <= totalPages; start += batchSize) {
-                const end = Math.min(totalPages, start + batchSize - 1);
-                const images = await loadImages(start, end);
-                if (images.length !== end - start + 1) throw new Error(i18n('no_page_images'));
-                const last = end === totalPages;
-                const instruction = `These are source pages ${start}-${end} of ${totalPages}, in order. Extract every exercise without omission. Preserve all mathematical text. Return exactly one JSON object with keys "questions" (array of complete question strings) and "pendingQuestion" (string). If a question continues beyond this batch, put its full unfinished text in pendingQuestion instead of questions; finish it using the next batch. Do not repeat questions already completed. ${last ? 'This is the final batch: complete the remaining question; pendingQuestion must be empty.' : ''}
-Previous unfinished question: ${pendingQuestion || '(none)'}`;
-                const messages = [{ role: 'user', content: [
-                    ...images.map(url => ({ type: 'image_url', image_url: { url } })),
-                    { type: 'text', text: instruction }
-                ] }];
-                const text = await callAI(i18n('prompt_exercise_parse_system') + '\nThe batch JSON object schema in the user request replaces the usual array schema.',
-                    messages, { feature, maxTokens: 20000, temperature: 0.3, apiTask });
-                const result = robustParseJSONObject(text);
-                if (!Array.isArray(result.questions) || result.questions.some(q => typeof q !== 'string' || !q.trim()) ||
-                    typeof result.pendingQuestion !== 'string' || (last && result.pendingQuestion.trim())) {
-                    throw ApiRuntime.failure('AI_PARSE_INVALID', i18n('toast_ai_return_parse_fail'));
+                let msgContent;
+                if (pageImages.length > 0) {
+                    const contentParts = [];
+                    for (const img of pageImages) {
+                        contentParts.push({ type: 'image_url', image_url: { url: img } });
+                    }
+                    contentParts.push({ type: 'text', text: i18n('prompt_exercise_all_pages', pageCount) });
+                    msgContent = [{ role: 'user', content: contentParts }];
+                } else {
+                    showToast(i18n('no_page_images'));
+                    return;
                 }
-                questions.push(...result.questions);
-                pendingQuestion = result.pendingQuestion;
-            }
-            if (!questions.length) throw ApiRuntime.failure('AI_PARSE_INVALID', i18n('toast_ai_no_valid_outline'));
-            return questions;
-        }
 
-        async function commitRecognizedExercise(folderId, taskId, questions, apiTask) {
-            const folder = getExercisesData().folders.find(f => f.id === folderId);
-            const task = folder?.tasks?.find(t => t.id === taskId);
-            if (!task) return;
-            if (apiTask && task.apiRecognitionOperationId === apiTask.id) return;
-            if (!questions.length || questions.some(q => typeof q !== 'string' || !q.trim())) throw ApiRuntime.failure('AI_PARSE_INVALID', i18n('toast_ai_return_parse_fail'));
-            const previousQuestions = task.questions || [];
-            task.questions = questions.map((latex, index) => ({ index, latex, status: 'pending', score: null, userDrawing: null, aiComment: null }));
-            task.apiRecognitionOperationId = apiTask?.id;
-            task.updatedAt = new Date().toISOString();
-            if (!saveData() || !await exWaitForExercisesDataSaves()) throw new Error(i18n('storage_save_failed'));
-            previousQuestions.forEach((q, i) => {
-                exInvalidateQuestionGrading({ taskId, questionIndex: i, questions: previousQuestions });
-                exPurgeQuestionDrawings(taskId, q.index ?? i, q);
-            });
-            if (previousQuestions.length) exForgetExercisePosition(folderId, taskId, true);
-            if ((task.sourceFiles || []).length) task.sourceFiles.forEach(sf => exQueueSourceUpload(sf.id));
-            else debouncedChatSync();
-            if (currentExerciseFolder?.folderId === folderId) {
-                const current = getExercisesData().folders.find(f => f.id === folderId);
-                if (current) renderExerciseFolderContent(current);
+                let result = await callAI(systemPrompt, msgContent, { maxTokens: 16384, temperature: 0.3, feature: 'exerciseBatch' });
+                if (!result) { showToast(i18n('toast_ai_return_parse_fail')); return; }
+
+                result = await autoFixTruncatedArray(result, systemPrompt, msgContent, 'exerciseBatch');
+
+                let questions;
+                try {
+                    questions = robustParseJSONArray(result);
+                } catch (e) {
+                    try { questions = splitQuestionsByNumber(result); } catch (e2) {
+                        showToast(i18n('toast_ai_return_parse_fail'));
+                        return;
+                    }
+                }
+
+                if (!Array.isArray(questions) || questions.length === 0) {
+                    showToast(i18n('toast_ai_no_valid_outline'));
+                    return;
+                }
+
+                questions = questions.filter(q => typeof q === 'string' && q.trim().length > 2);
+
+                const data = getExercisesData();
+                const folder = data.folders.find(f => f.id === folderId);
+                if (!folder) return;
+                const task = folder.tasks.find(t => t.id === taskId);
+                if (!task) return;
+
+                task.questions = questions.map((q, idx) => ({
+                    index: idx,
+                    latex: q,
+                    status: 'pending',
+                    score: null,
+                    userDrawing: null,
+                    aiComment: null
+                }));
+
+                saveData();
+                showToast(i18n('recognized_q', questions.length));
+                // 识别成功后调用文件变更时同步，把这份习题的文件和识别结果传到云端。
+                // exercise_upload 自己提交 metadata，不再另排一次同步，只弹一次提示。
+                if ((task.sourceFiles || []).length) task.sourceFiles.forEach(sf => exQueueSourceUpload(sf.id));
+                else debouncedChatSync();
+
+                if (currentExerciseFolder && currentExerciseFolder.folderId === folderId) {
+                    renderExerciseFolderContent(folder);
+                }
+            } catch (err) {
+                console.error('AI解析习题失败:', err);
+                showToast(i18n('toast_failed') + err.message);
             }
-            showToast(i18n('recognized_q', questions.length));
-            return true;
         }
 
         // ==================== Robust JSON Parsing Utilities ====================
         // AI返回的JSON经常格式不标准，这些工具函数提供多层容错
-        function robustParseJSONObject(text) {
-            const cleaned = String(text || '').trim().replace(/^```(?:json|JSON|js|javascript)?\s*/, '').replace(/\s*```$/, '');
+        function robustParseJSONArray(text) {
+            if (!text || typeof text !== 'string') throw new Error(i18n('empty_text'));
+
+            // 预处理：去掉markdown代码块标记
+            let cleaned = text.replace(/```(?:json|JSON|js|javascript)?\s*\n?/g, '').replace(/```/g, '').trim();
+
+            // Strategy 1: 直接解析
+            try { const r = JSON.parse(cleaned); if (Array.isArray(r)) return r; } catch(e) {}
+
+            // Strategy 2: 提取最外层 [...] 并解析
+            const arrMatch = text.match(/\[[\s\S]*\]/);
+            if (arrMatch) {
+                try { const r = JSON.parse(arrMatch[0]); if (Array.isArray(r)) return r; } catch(e) {}
+
+                // Strategy 2b: 修复常见问题后重试
+                try {
+                    let fixed = arrMatch[0];
+                    fixed = fixed.replace(/,\s*\]/g, ']');     // 尾部多余逗号
+                    fixed = fixed.replace(/,\s*,+/g, ',');     // 连续逗号
+                    const r = JSON.parse(fixed);
+                    if (Array.isArray(r)) return r;
+                } catch(e) {}
+
+                // Strategy 2c: JSON字符串值内含未转义的换行——逐字符修复
+                try {
+                    const fixed = fixUnescapedNewlinesInJSON(arrMatch[0]);
+                    const r = JSON.parse(fixed);
+                    if (Array.isArray(r)) return r;
+                } catch(e) {}
+            }
+
+            // Strategy 3: 手动逐项提取 —— 用状态机遍历，找出数组内的每个字符串值
             try {
-                const value = JSON.parse(cleaned);
-                if (value && typeof value === 'object' && !Array.isArray(value)) return value;
-            } catch (_) {}
-            throw ApiRuntime.failure('AI_PARSE_INVALID', i18n('parse_json_object_failed'));
+                const src = arrMatch ? arrMatch[0] : cleaned;
+                const items = extractJSONStringValues(src);
+                if (items.length > 0) return items;
+            } catch(e) {}
+
+            // Strategy 4: 按题号分割纯文本
+            const byNumber = splitQuestionsByNumber(text);
+            if (byNumber.length > 0) return byNumber;
+
+            throw new Error(i18n('parse_json_array_failed'));
+        }
+
+        // 修复JSON字符串值内未转义的真实换行符（AI常见错误）
+        function fixUnescapedNewlinesInJSON(jsonStr) {
+            let result = '';
+            let inString = false;
+            let escaped = false;
+            for (let i = 0; i < jsonStr.length; i++) {
+                const ch = jsonStr[i];
+                if (escaped) {
+                    result += ch;
+                    escaped = false;
+                    continue;
+                }
+                if (ch === '\\') {
+                    result += ch;
+                    escaped = true;
+                    continue;
+                }
+                if (ch === '"') {
+                    inString = !inString;
+                    result += ch;
+                    continue;
+                }
+                if (inString && ch === '\n') {
+                    result += '\\n';
+                    continue;
+                }
+                if (inString && ch === '\t') {
+                    result += '\\t';
+                    continue;
+                }
+                if (inString && ch === '\r') {
+                    continue; // 跳过\r
+                }
+                result += ch;
+            }
+            return result;
+        }
+
+        // 从JSON文本中按状态机提取所有顶层字符串值（跳过key）
+        function extractJSONStringValues(src) {
+            const items = [];
+            let i = 0;
+            // 找到 [ 开始
+            while (i < src.length && src[i] !== '[') i++;
+            i++; // 跳过 [
+
+            while (i < src.length) {
+                // 跳过空白和逗号
+                while (i < src.length && /[\s,]/.test(src[i])) i++;
+                if (i >= src.length || src[i] === ']') break;
+
+                if (src[i] === '"') {
+                    // 提取一个完整的字符串
+                    let str = '';
+                    i++; // 跳过开头 "
+                    while (i < src.length) {
+                        if (src[i] === '\\' && i + 1 < src.length) {
+                            const next = src[i + 1];
+                            if (next === '"') { str += '"'; i += 2; }
+                            else if (next === 'n') { str += '\n'; i += 2; }
+                            else if (next === 't') { str += '\t'; i += 2; }
+                            else if (next === '\\') { str += '\\'; i += 2; }
+                            else if (next === '/') { str += '/'; i += 2; }
+                            else { str += src[i]; i++; }
+                        } else if (src[i] === '"') {
+                            i++; // 跳过结尾 "
+                            break;
+                        } else if (src[i] === '\n' || src[i] === '\r') {
+                            // 未转义的换行，当作内容
+                            if (src[i] === '\n') str += '\n';
+                            i++;
+                        } else {
+                            str += src[i];
+                            i++;
+                        }
+                    }
+                    if (str.trim().length > 0) {
+                        items.push(str);
+                    }
+                } else {
+                    // 不是字符串，跳过这个token（可能是数字、null等）
+                    while (i < src.length && src[i] !== ',' && src[i] !== ']') i++;
+                }
+            }
+            return items;
+        }
+
+        function robustParseJSONObject(text) {
+            if (!text || typeof text !== 'string') throw new Error(i18n('empty_text'));
+
+            // Strategy 1: 去掉代码块直接解析
+            let cleaned = text.replace(/```(?:json|JSON|js|javascript)?\s*/g, '').replace(/```/g, '').trim();
+            try { return JSON.parse(cleaned); } catch(e) {}
+
+            // Strategy 2: 提取最外层 {...}
+            const objMatch = text.match(/\{[\s\S]*\}/);
+            if (objMatch) {
+                try { return JSON.parse(objMatch[0]); } catch(e) {}
+                // 修复常见问题
+                try {
+                    let fixed = objMatch[0]
+                        .replace(/,\s*\}/g, '}')
+                        .replace(/,\s*,/g, ',')
+                        .replace(/(['"])?(\w+)(['"])?\s*:/g, '"$2":')  // key加引号
+                        .replace(/:\s*'([^']*)'/g, ':"$1"');           // 单引号值→双引号
+                    return JSON.parse(fixed);
+                } catch(e) {}
+            }
+
+            // Strategy 3: 用正则提取关键字段
+            const scoreMatch = text.match(/["']?score["']?\s*[:：]\s*(\d+)/i);
+            const correctMatch = text.match(/["']?correct["']?\s*[:：]\s*(true|false)/i);
+            const commentMatch = text.match(/["']?comment["']?\s*[:：]\s*["']([^"']+)["']/i);
+            if (scoreMatch) {
+                return {
+                    score: parseInt(scoreMatch[1]),
+                    correct: correctMatch ? correctMatch[1] === 'true' : true,
+                    rigor: '-',
+                    structure: '-',
+                    comment: commentMatch ? commentMatch[1] : i18n('parse_completed')
+                };
+            }
+
+            throw new Error(i18n('parse_json_object_failed'));
         }
 
         // 习题批改：解析 <score>/<solution>/<errors>/<similar> 标签格式的 AI 返回。
-        // 所有 API 的评分都必须具有完整字段和有效分数，否则保留任务并允许重试。
+        // Codex 使用严格模式：四部分和 0–10 整数分必须完整有效，否则抛错且不提交评分。
+        // 关闭 Codex 时保留旧 API 的宽松解析，避免改变原有提供商的兼容性。
         function parseExerciseGradingResponse(text, { strict = false } = {}) {
             const raw = String(text || '').replace(/```[a-zA-Z]*\s*/g, '').replace(/```/g, '').trim();
             const tagNames = '(?:score|solution|errors|similar)';
@@ -29135,51 +29135,197 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
             return questions;
         }
 
-        async function extractExerciseQuestions(folderId, taskId, dataUrl, isImage, mimeType, aiFeature = 'exerciseUpload', apiTask) {
-            if (!apiTask && !aiFeatureUsesCodex(aiFeature)) return runApiOperation('exercise', [folderId, taskId], [folderId, taskId, dataUrl, isImage, mimeType, aiFeature]);
+        async function extractExerciseQuestions(folderId, taskId, dataUrl, isImage, mimeType, aiFeature = 'exerciseUpload') {
+            const systemPrompt = i18n('prompt_exercise_parse_system');
+
             try {
-                const current = getExercisesData().folders.find(f => f.id === folderId)?.tasks?.find(t => t.id === taskId);
-                if (!current || (apiTask && current.apiRecognitionOperationId === apiTask.id)) return;
-                let questions;
+                let msgContent;
                 if (isImage) {
-                    questions = await recognizeExercisePages(1, () => Promise.resolve([dataUrl]), aiFeature, apiTask);
+                    // 图片：直接发送
+                    msgContent = [{
+                        role: 'user',
+                        content: [
+                            { type: 'image_url', image_url: { url: dataUrl } },
+                            { type: 'text', text: i18n('prompt_exercise_image') }
+                        ]
+                    }];
                 } else {
-                    const bytes = Uint8Array.from(atob(dataUrl.split(',')[1]), c => c.charCodeAt(0));
-                    const pdf = await pdfjsLib.getDocument({ data: bytes.slice(0) }).promise;
-                    const count = pdf.numPages;
-                    await pdf.destroy();
-                    questions = await recognizeExercisePages(count,
-                        (start, end) => renderPdfPagesToImages(bytes, 1.5, start, end), aiFeature, apiTask);
+                    // PDF: 将每页渲染为图片发送（文本提取对数学公式效果极差）
+                    const base64 = dataUrl.split(',')[1];
+                    const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+                    let pageImages = [];
+                    try {
+                        pageImages = await renderPdfPagesToImages(bytes, 1.5);
+                    } catch(e) {
+                        console.warn('PDF渲染图片失败，回退文本提取:', e);
+                    }
+
+                    if (pageImages.length > 0) {
+                        // 用图片方式发送（识别率远高于文本提取）
+                        const contentParts = [];
+                        for (const img of pageImages) {
+                            contentParts.push({ type: 'image_url', image_url: { url: img } });
+                        }
+                        contentParts.push({ type: 'text', text: i18n('prompt_exercise_pdf_pages', pageImages.length) });
+                        msgContent = [{ role: 'user', content: contentParts }];
+                    } else {
+                        // 图片渲染失败，回退文本提取
+                        let pdfText = '';
+                        try {
+                            const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+                            for (let p = 1; p <= pdf.numPages; p++) {
+                                const page = await pdf.getPage(p);
+                                const tc = await page.getTextContent();
+                                pdfText += tc.items.map(it => it.str).join(' ') + '\n';
+                            }
+                        } catch (e) { pdfText = i18n('pdf_text_extraction_failed'); }
+                        msgContent = [{
+                            role: 'user',
+                            content: i18n('prompt_exercise_pdf_text') + '\n\n' + pdfText
+                        }];
+                    }
                 }
-                return await commitRecognizedExercise(folderId, taskId, questions, apiTask);
-            } catch (error) {
-                if (apiTask) throw error;
-                console.error('AI解析习题失败:', error);
-                showToast(i18n('toast_failed') + error.message);
+
+                // 第一次请求，maxTokens 给足
+                let result = await callAI(systemPrompt, msgContent, { maxTokens: 16384, temperature: 0.3, feature: aiFeature });
+                if (!result) { showToast(i18n('toast_ai_return_parse_fail')); return; }
+
+                // 检测是否被截断（JSON数组没有以 ] 结尾）
+                result = await autoFixTruncatedArray(result, systemPrompt, msgContent, aiFeature);
+
+                // Parse JSON — robust multi-strategy extraction
+                let questions;
+                try {
+                    questions = robustParseJSONArray(result);
+                } catch (e) {
+                    console.error('习题JSON解析全部失败, AI原始返回:', result);
+                    try {
+                        questions = splitQuestionsByNumber(result);
+                    } catch (e2) {
+                        showToast(i18n('toast_ai_return_parse_fail'));
+                        return;
+                    }
+                }
+
+                if (!Array.isArray(questions) || questions.length === 0) {
+                    showToast(i18n('toast_ai_no_valid_outline'));
+                    return;
+                }
+
+                // 过滤无效项（太短的可能是解析残留）
+                questions = questions.filter(q => typeof q === 'string' && q.trim().length > 2);
+
+                // Update task
+                const data = getExercisesData();
+                const folder = data.folders.find(f => f.id === folderId);
+                if (!folder) return;
+                const task = folder.tasks.find(t => t.id === taskId);
+                if (!task) return;
+
+                task.questions = questions.map((q, idx) => ({
+                    index: idx,
+                    latex: q,
+                    status: 'pending',
+                    score: null,
+                    userDrawing: null,
+                    aiComment: null
+                }));
+
+                saveData();
+                showToast(i18n('recognized_q', questions.length));
+                // 识别成功后调用文件变更时同步，把这份习题的文件和识别结果传到云端。
+                // exercise_upload 自己提交 metadata，不再另排一次同步，只弹一次提示。
+                if ((task.sourceFiles || []).length) task.sourceFiles.forEach(sf => exQueueSourceUpload(sf.id));
+                else debouncedChatSync();
+
+                if (currentExerciseFolder && currentExerciseFolder.folderId === folderId) {
+                    renderExerciseFolderContent(folder);
+                }
+
+            } catch (err) {
+                console.error('AI解析习题失败:', err);
+                showToast(i18n('toast_failed') + err.message);
             }
         }
 
         // 将PDF每页渲染为图片(dataURL)，用于发送给AI做视觉识别
-        async function renderPdfPagesToImages(pdfBytes, scale, startPage = 1, endPage = Infinity) {
+        async function renderPdfPagesToImages(pdfBytes, scale) {
             const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice(0) }).promise;
+            const images = [];
+            const maxPages = 20; // 限制最多20页防止太大
+            const pageCount = Math.min(pdf.numPages, maxPages);
+            for (let p = 1; p <= pageCount; p++) {
+                const page = await pdf.getPage(p);
+                const viewport = page.getViewport({ scale: scale || 1.5 });
+                const canvas = document.createElement('canvas');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                const ctx = canvas.getContext('2d');
+                await page.render({ canvasContext: ctx, viewport }).promise;
+                // 压缩为JPEG减小体积
+                images.push(canvas.toDataURL('image/jpeg', 0.85));
+            }
+            return images;
+        }
+
+        // 检测AI返回的JSON数组是否被截断，如果是则请求AI继续输出
+        async function autoFixTruncatedArray(result, systemPrompt, originalMsg, aiFeature) {
+            const trimmed = result.trim();
+            // 检查是否有完整的 ] 结尾
+            if (trimmed.endsWith(']')) return result;
+
+            // 看起来被截断了（有 [ 但没有 ]）
+            const hasBracketStart = trimmed.includes('[');
+            if (!hasBracketStart) return result;
+
+            console.warn('AI返回可能被截断，尝试继续请求...');
+            showToast(i18n('toast_processing'));
+
+            // 请求AI从断点继续
             try {
-                const images = [];
-                const pageCount = Math.min(pdf.numPages, endPage);
-                for (let p = Math.max(1, startPage); p <= pageCount; p++) {
-                    const page = await pdf.getPage(p);
-                    const viewport = page.getViewport({ scale: scale || 1.5 });
-                    const canvas = document.createElement('canvas');
-                    canvas.width = viewport.width;
-                    canvas.height = viewport.height;
-                    const ctx = canvas.getContext('2d');
-                    await page.render({ canvasContext: ctx, viewport }).promise;
-                    // 压缩为JPEG减小体积
-                    images.push(canvas.toDataURL('image/jpeg', 0.85));
-                    canvas.width = 0; canvas.height = 0;
-                    page.cleanup();
+                const continueMsg = [
+                    ...originalMsg,
+                    { role: 'assistant', content: result },
+                    { role: 'user', content: i18n('prompt_continue_truncated_json') }
+                ];
+                const continuation = await callAI(systemPrompt, continueMsg, { maxTokens: 16384, temperature: 0.3, feature: aiFeature });
+                if (continuation) {
+                    // 合并：去掉续写中可能重复的 [ 开头
+                    let part2 = continuation.trim();
+                    if (part2.startsWith('[')) part2 = part2.substring(1);
+                    // 确保拼接处有逗号
+                    let combined = trimmed;
+                    if (!combined.endsWith(',') && !part2.startsWith(',') && !part2.startsWith(']')) {
+                        combined += ',';
+                    }
+                    combined += part2;
+                    // 如果还是没有 ] 结尾，强制补上
+                    if (!combined.trim().endsWith(']')) {
+                        // 找到最后一个完整的字符串项，截断到那里并补 ]
+                        const lastQuote = combined.lastIndexOf('"');
+                        if (lastQuote > 0) {
+                            combined = combined.substring(0, lastQuote + 1) + ']';
+                        } else {
+                            combined += ']';
+                        }
+                    }
+                    return combined;
                 }
-                return images;
-            } finally { await pdf.destroy(); }
+            } catch (e) {
+                console.warn('续写请求失败:', e);
+            }
+
+            // 续写失败，尝试强制修复截断的数组
+            let fixed = trimmed;
+            // 找最后一个完整字符串结尾
+            const lastCompleteQuote = fixed.lastIndexOf('"');
+            if (lastCompleteQuote > 0) {
+                fixed = fixed.substring(0, lastCompleteQuote + 1);
+                // 去掉可能的尾部逗号
+                fixed = fixed.replace(/,\s*$/, '');
+                fixed += ']';
+            }
+            return fixed;
         }
 
         async function viewExerciseSource(folderId, taskId, fileId) {
@@ -29776,8 +29922,6 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
                 qDiv.style.maxHeight = '';
             }
 
-            void renderApiSelectionNotes(apiSelectionTarget(true), qDiv.querySelector('.lecture-body')).catch(console.error);
-
             // Render KaTeX — 和阅读页面完全一致
             renderLectureMath(qDiv);
 
@@ -30267,8 +30411,10 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
             if (!exDoingState) return true;
 
             const expectedState = exDoingState;
-            // 只取消尚未形成快照的完成操作；已提交的批改继续保存到原题。
+            // 返回的含义是保存当前草稿并离开；本题仍在等待的旧完成/批量评分不得在退出后回写。
+            // 先取消还停在 restore/pending-save、尚未形成题目 token 的完成操作。
             exInvalidateCompleteGeneration(expectedState);
+            exInvalidateQuestionGrading(expectedState);
             _exCloseState = expectedState;
             const closePromise = (async () => {
                 try {
@@ -31588,7 +31734,7 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
             const pageImages = exCollectPageImages();
             const gradingToken = exIssueQuestionGradingToken(taskId, originalQuestionIndex);
             const gradingGuard = exQuestionGradingGuard(gradingToken);
-            const isCurrentCompletion = gradingGuard;
+            const isCurrentCompletion = () => isLatestCompletion() && gradingGuard();
 
             // 完成时先把当前书写持久化到本地并云同步（评分失败也不丢内容）。
             const drawingSaved = await saveCurrentDrawingToCache();
@@ -31600,25 +31746,7 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
             if (exDoingState !== expectedState) return;
 
             const gradingPages = await exDropBlankPages(pageImages);
-            if (!isLatestCompletion() || !isCurrentCompletion()) return;
-            const snapshot = { folderId, taskId, questionIndex, isWrong,
-                q: { index: q.index }, originalQuestionIndex, questionLatex,
-                timerStartedAtForQuestion, startingTimeUsed, pageImages, gradingPages, gradingToken };
-            if (!aiFeatureUsesCodex('gradeComplete')) {
-                return runApiOperation('exerciseGrade', [taskId, originalQuestionIndex, isWrong, gradingToken.generation], [snapshot]);
-            }
-            return gradeExerciseSnapshot(snapshot, null, expectedState);
-        }
-
-        async function gradeExerciseSnapshot(snapshot, apiTask, expectedState = null) {
-            const { folderId, taskId, questionIndex, isWrong, q, originalQuestionIndex,
-                questionLatex, timerStartedAtForQuestion, startingTimeUsed, pageImages,
-                gradingPages, gradingToken } = snapshot;
-            const gradingGuard = exQuestionGradingGuard(gradingToken);
-            const isCurrentCompletion = gradingGuard;
             if (!isCurrentCompletion()) return;
-            if (!expectedState && exDoingState?.taskId === taskId && exDoingState.isWrong === isWrong &&
-                exStableQuestionIndex(exDoingState) === originalQuestionIndex) expectedState = exDoingState;
             const userDrawing = pageImages[0];
             const extraDrawings = pageImages.slice(1);
 
@@ -31631,12 +31759,12 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
             try {
                 const msgContent = [{ role: 'user', content: exGradingContent(gradingPages, questionLatex) }];
 
-                const result = await callAI(systemPrompt, msgContent, { maxTokens: 20000, temperature: 0.3, feature: 'gradeComplete', apiTask });
+                const result = await callAI(systemPrompt, msgContent, { maxTokens: 8192, temperature: 0.3, feature: 'gradeComplete' });
                 if (!isCurrentCompletion()) return;
-                if (!result) throw ApiRuntime.failure('AI_PARSE_INVALID', i18n('toast_ai_return_parse_fail'));
+                if (!result) { showToast(i18n('toast_ai_return_parse_fail')); return; }
 
                 const grading = parseExerciseGradingResponse(result, {
-                    strict: true
+                    strict: aiFeatureUsesCodex('gradeComplete')
                 });
                 const score = Math.min(10, Math.max(0, Math.round(grading.score || 0)));
                 const comment = i18n('grade_comment', grading.solution || '-', grading.errors || '-', grading.similar_problem || '-');
@@ -31649,9 +31777,9 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
                     let redoIdx;
                     let redoBaseKey;
                     let redoMirrorBaseKeys;
-                    const redoTime = apiTask ? await apiTask.value('gradedAt', () => new Date().toISOString()) : new Date().toISOString();
+                    const redoTime = new Date().toISOString();
                     const pendingRedo = {
-                        drawingId: apiTask ? 'api_' + apiTask.id : exCreateRedoDrawingId(),
+                        drawingId: exCreateRedoDrawingId(),
                         time: redoTime
                     };
                     while (true) {
@@ -31659,8 +31787,7 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
                         wrongTask = (data.wrongByFolder[folderId] || []).find(t => t.taskId === taskId);
                         commitQ = wrongTask && (wrongTask.questions || [])
                             .find(item => item && item.questionIndex === originalQuestionIndex);
-                        if (!commitQ) return;
-                        if (apiTask && (commitQ.redoDrawings || []).some(r => r.apiOperationId === apiTask.id)) return;
+                        if (!commitQ) throw new Error('Wrong question no longer exists');
                         redoIdx = (commitQ.redoDrawings || []).length;
                         const redoBaseKeys = exRedoDrawingBaseKeys(
                             taskId, originalQuestionIndex, pendingRedo, redoIdx);
@@ -31674,16 +31801,14 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
                             pageImages,
                             gradingGuard
                         );
-                        if (!isCurrentCompletion()) return;
-                        if (!pagesSaved) throw new Error(i18n('storage_save_failed'));
+                        if (!pagesSaved || !isCurrentCompletion()) return;
 
                         // 图片写入期间若云合并追加了历史，按新的稳定尾下标重试。
                         data = getExercisesData();
                         wrongTask = (data.wrongByFolder[folderId] || []).find(t => t.taskId === taskId);
                         commitQ = wrongTask && (wrongTask.questions || [])
                             .find(item => item && item.questionIndex === originalQuestionIndex);
-                        if (!commitQ) return;
-                        if (apiTask && (commitQ.redoDrawings || []).some(r => r.apiOperationId === apiTask.id)) return;
+                        if (!commitQ) throw new Error('Wrong question no longer exists');
                         if ((commitQ.redoDrawings || []).length === redoIdx) break;
                     }
 
@@ -31709,7 +31834,6 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
                     if (!commitQ.redoDrawings) commitQ.redoDrawings = [];
                     commitQ.redoDrawings.push({
                         drawingId: pendingRedo.drawingId,
-                        apiOperationId: apiTask?.id,
                         drawing: userDrawing,
                         extra: extraDrawings,
                         pages: pageImages.length,
@@ -31731,13 +31855,11 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
                         if (matched >= 0) canonicalIndex = matched;
                     }
                     let origQ = task && task.questions && task.questions[canonicalIndex];
-                    if (!origQ) return;
-                    if (apiTask && origQ.apiGradeOperationId === apiTask.id) return;
+                    if (!origQ) throw new Error('Exercise question no longer exists');
                     if (!isCurrentCompletion()) return;
                     const pagesSaved = await exSaveGradedPages(
                         `exercise_drawing_${taskId}_${originalQuestionIndex}`, pageImages, gradingGuard);
-                    if (!isCurrentCompletion()) return;
-                        if (!pagesSaved) throw new Error(i18n('storage_save_failed'));
+                    if (!pagesSaved || !isCurrentCompletion()) return;
 
                     // 图片写入后再次取 canonical 对象，随后才提交题目/错题元数据。
                     data = getExercisesData();
@@ -31749,8 +31871,7 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
                         if (matched >= 0) canonicalIndex = matched;
                     }
                     origQ = task && task.questions && task.questions[canonicalIndex];
-                    if (!origQ) return;
-                    if (apiTask && origQ.apiGradeOperationId === apiTask.id) return;
+                    if (!origQ) throw new Error('Exercise question no longer exists');
                     if (!isCurrentCompletion()) return;
 
                     let finalTimeUsed = origQ.timeUsedSeconds || 0;
@@ -31763,7 +31884,6 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
                         if (exTimerInterval) { clearInterval(exTimerInterval); exTimerInterval = null; }
                     }
 
-                    origQ.apiGradeOperationId = apiTask?.id;
                     origQ.status = 'done';
                     origQ.score = score;
                     origQ.userDrawing = userDrawing;
@@ -31806,7 +31926,8 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
                 const exercisesSaved = await exWaitForExercisesDataSaves();
                 if (!metadataSaved || !exercisesSaved) {
                     exFailGradedPagesCloudCommit(gradedCloudCommit);
-                    throw new Error(i18n('storage_save_failed'));
+                    showToast(i18n('storage_save_failed'));
+                    return;
                 }
                 exCommitGradedPagesCloudCommit(gradedCloudCommit);
                 gradedCloudCommit = null;
@@ -31830,7 +31951,6 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
 
             } catch (err) {
                 exFailGradedPagesCloudCommit(gradedCloudCommit);
-                if (apiTask) throw err;
                 console.error('AI评分失败:', err);
                 showToast(i18n('toast_failed') + err.message);
             }
@@ -31949,9 +32069,9 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
             });
 
             // 打开AI聊天弹窗，预填充错题上下文
-            aiChatSessionId = 'wrong:' + JSON.stringify(wrongSelectedItems.map(item => [item.folderId, item.taskId, item.qIdx]).sort());
-            await loadGeneralChat(aiChatSessionId);
-            renderGeneralChat();
+            const container = document.getElementById('chatContainer');
+            container.innerHTML = '';
+            addChatMessage(container, false, i18n('chat_wrong_loaded', wrongSelectedItems.length));
             showModal('aiChatModal');
 
             // 替换sendAIChat的行为，在本次对话中注入错题上下文
@@ -32016,42 +32136,29 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
             const pages = await exWrongAnswerPages(taskId, q, questionIndex);
             if (!pages.length) { showToast(i18n('answer_image_unavailable')); return; }
 
-            const args = [folderId, taskId, q.questionIndex ?? questionIndex, q.latex, pages];
-            if (!aiFeatureUsesCodex('wrongRegrade')) return runApiOperation('wrongRegrade', args.slice(0, 3), args);
-            return completeWrongRegrade(...args);
-        }
-
-        async function completeWrongRegrade(folderId, taskId, originalQuestionIndex, latex, pages, apiTask) {
             showToast(i18n('toast_asking_ai'));
 
             const systemPrompt = i18n('prompt_grade_system');
 
             try {
-                const msgContent = [{ role: 'user', content: exGradingContent(pages, latex) }];
+                const msgContent = [{ role: 'user', content: exGradingContent(pages, q.latex) }];
 
-                const result = await callAI(systemPrompt, msgContent, { maxTokens: 20000, temperature: 0.3, feature: 'wrongRegrade', apiTask });
+                const result = await callAI(systemPrompt, msgContent, { maxTokens: 8192, temperature: 0.3, feature: 'wrongRegrade' });
                 if (!result) { showToast(i18n('toast_ai_return_parse_fail')); return; }
 
                 const grading = parseExerciseGradingResponse(result, {
-                    strict: true
+                    strict: aiFeatureUsesCodex('wrongRegrade')
                 });
                 const score = Math.min(10, Math.max(0, Math.round(grading.score || 0)));
                 const comment = i18n('grade_comment', grading.solution || '-', grading.errors || '-', grading.similar_problem || '-');
 
-                const wrongTask = (getExercisesData().wrongByFolder[folderId] || []).find(t => t.taskId === taskId);
-                const questionIndex = wrongTask?.questions?.findIndex(q => q.questionIndex === originalQuestionIndex) ?? -1;
-                const q = wrongTask?.questions?.[questionIndex];
-                if (!q) return;
                 q.score = score;
                 q.aiComment = comment;
-                if (!saveData() || !await exWaitForExercisesDataSaves()) throw new Error(i18n('storage_save_failed'));
+                saveData();
                 debouncedChatSync();
                 showToast(i18n('score_display', score));
-                if (exDoingState?.folderId === folderId && exDoingState.taskId === taskId &&
-                    exDoingState.isWrong && exStableQuestionIndex(exDoingState) === originalQuestionIndex)
-                    openExerciseDoing(folderId, taskId, questionIndex, true);
+                openExerciseDoing(folderId, taskId, questionIndex, true);
             } catch (err) {
-                if (apiTask) throw err;
                 console.error('重新生成AI解析失败:', err);
                 showToast(i18n('toast_failed') + err.message);
             }
@@ -32794,7 +32901,6 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
             nbRenderTexts();
             // 翻页后的画布重绘/页码变化同样被原生直渲染冻结，主动刷新上屏
             nbNativeRefresh();
-            void nbRestoreRecognition(notebookId, page.id).catch(console.error);
             return true;
         }
 
@@ -33663,9 +33769,7 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
         async function nbRecognizeSelection() {
             const strokes = nbSelStrokes();
             if (!strokes.length) return;
-            const bb = { ...nbState.selection.bbox };
-            const notebookId = nbState.notebookId;
-            const pageId = nbCurrentPage()?.id;
+            const bb = nbState.selection.bbox;
             const pad = 16;
             const w = bb.x1 - bb.x0 + pad * 2, h = bb.y1 - bb.y0 + pad * 2;
             const scale = Math.min(2.5, 900 / Math.max(w, h));
@@ -33679,34 +33783,27 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
             for (const s of strokes) nbDrawStrokeObj(ctx, s);
             const img = cv.toDataURL('image/png');
             showToast(i18n('ai_recognizing'));
-            const args = [notebookId, pageId, bb, img];
             try {
-                if (!aiFeatureUsesCodex('nbRecognize')) await runApiOperation('nbRecognize', [notebookId, pageId, bb, img], args);
-                else await completeNotebookRecognition(...args);
-            } catch (error) { showToast(i18n('ai_recognition_failed', error.message)); }
+                const text = await callAI(
+                    i18n('prompt_handwriting_recognition_system'),
+                    [{ role: 'user', content: [
+                        { type: 'image_url', image_url: { url: img } },
+                        { type: 'text', text: i18n('prompt_handwriting_recognition_user') }
+                    ] }],
+                    { feature: 'nbRecognize' }
+                );
+                nbShowRecognizeResult(text);
+            } catch (e) {
+                showToast(i18n('ai_recognition_failed', e.message));
+            }
         }
-        async function completeNotebookRecognition(notebookId, pageId, bb, image, apiTask) {
-            const text = await callAI(i18n('prompt_handwriting_recognition_system'), [{ role: 'user', content: [
-                { type: 'image_url', image_url: { url: image } },
-                { type: 'text', text: i18n('prompt_handwriting_recognition_user') }
-            ] }], { feature: 'nbRecognize', apiTask });
-            if (!nbGetNotebook(notebookId)?.pages?.some(p => p.id === pageId)) return;
-            await saveFileData('__api_recognition__:' + pageId, { text, bb, notebookId, pageId, pending: true });
-            await nbRestoreRecognition(notebookId, pageId);
-        }
-        async function nbRestoreRecognition(notebookId, pageId) {
-            const result = await getFileData('__api_recognition__:' + pageId);
-            if (result?.pending && nbState.notebookId === notebookId && nbCurrentPage()?.id === pageId)
-                nbShowRecognizeResult(result.text, result.bb, notebookId, pageId);
-        }
-        function nbShowRecognizeResult(text, bb, notebookId, pageId) {
+        function nbShowRecognizeResult(text) {
+            const bb = nbState.selection ? nbState.selection.bbox : { x0: 100, y1: 100 };
             document.getElementById('nbQuizTitle').textContent = i18n('ai_recognition_result');
             const body = document.getElementById('nbQuizBody');
             body.innerHTML = renderChatMarkdownLatex(text);
             try { renderLectureMath(body); } catch (e) {}
             body.dataset.raw = text;
-            body.dataset.recognitionPage = pageId;
-            body.dataset.recognitionNotebook = notebookId;
             document.getElementById('nbQuizFoot').innerHTML = `
                 <button class="nb-panel-btn" onclick="nbInsertRecognizedText(${Math.round(bb.x0)},${Math.round(bb.y1) + 20})">${i18n('insert_as_text_box')}</button>
                 <button class="nb-panel-btn" onclick="nbCopyText()">${i18n('copy_text')}</button>
@@ -33719,8 +33816,6 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
             navigator.clipboard?.writeText(raw).then(() => showToast(i18n('copied')), () => showToast(i18n('copy_failed')));
         }
         function nbInsertRecognizedText(x, y) {
-            const body = document.getElementById('nbQuizBody');
-            if (nbState.notebookId !== body.dataset.recognitionNotebook || nbCurrentPage()?.id !== body.dataset.recognitionPage) return;
             const raw = document.getElementById('nbQuizBody').dataset.raw || '';
             nbHideQuiz();
             nbAddTextBox(Math.min(x, NB_PAGE_W - 250), Math.min(y, NB_PAGE_H - 80), raw, true);
@@ -34871,9 +34966,8 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
             const n = (c.strokes || []).length;
             return n + ':' + (n ? c.strokes[n - 1].id : '');
         }
-        async function nbBuildHandwritingIndex(notebookId = nbState.notebookId, apiTask) {
-            if (!apiTask && !aiFeatureUsesCodex('nbHandwritingIndex')) return runApiOperation('handwriting', notebookId, [notebookId]);
-            const nb = nbGetNotebook(notebookId);
+        async function nbBuildHandwritingIndex() {
+            const nb = nbCurrentNotebook();
             if (!nb) return;
             await nbSavePageNow();
             let done = 0, skipped = 0;
@@ -34886,7 +34980,7 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
                     c = raw ? JSON.parse(raw) : null;
                 } catch (e) { c = null; }
                 if (!c || !(c.strokes || []).some(s => s.tool === 'pen' || s.tool === 'hl')) { skipped++; continue; }
-                const sig = await ApiRuntime.fingerprint({ strokes: c.strokes, texts: c.texts, media: c.media });
+                const sig = nbStrokeSig(c);
                 if (c.recognized && c.recognized.sig === sig) { skipped++; continue; }
                 try {
                     const cv = await nbRenderPageToCanvas(pg, c, 1000);
@@ -34896,22 +34990,17 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
                             { type: 'image_url', image_url: { url: cv.toDataURL('image/jpeg', 0.8) } },
                             { type: 'text', text: i18n('prompt_handwriting_index_user') }
                         ] }],
-                        { feature: 'nbHandwritingIndex', apiTask }
+                        { feature: 'nbHandwritingIndex' }
                     );
-                    if (nbState.notebookId === notebookId && nbCurrentPage()?.id === pg.id) await nbSavePageNow();
-                    const latest = await nbLoadPageContent(pg.id);
-                    if (await ApiRuntime.fingerprint({ strokes: latest.strokes, texts: latest.texts, media: latest.media }) !== sig) continue;
-                    c = latest;
                     c.recognized = { text, sig, at: new Date().toISOString() };
                     nbSnippetCache[pg.id] = undefined;
                     await saveFileData('nbpage_' + pg.id, JSON.stringify(c));
-                    if (notebookId === nbState.notebookId && nbCurrentPage()?.id === pg.id && nbState.content) nbState.content.recognized = c.recognized;
+                    if (i === nbState.pageIndex && nbState.content) nbState.content.recognized = c.recognized;
                     done++;
                     showToast(i18n('handwriting_progress', done));
                 } catch (e) {
                     console.error('[nb] 手写识别失败:', e);
                     showToast(i18n('recognition_interrupted', e.message));
-                    if (apiTask) throw e;
                     break;
                 }
             }
@@ -35237,7 +35326,7 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
 
         function nbRetryGeneration(r) {
             const pg = r.pendingGen;
-            if (!pg) { nbGenerateQuiz(r, r.stage || 0, false, r.dueAt || nbStageDue(r, r.stage || 0)); return; }
+            if (!pg) { r.status = 'pending'; saveData(); return; }
             showToast(i18n('regenerating_quiz'));
             nbGenerateQuiz(r, pg.stage, pg.extra, pg.dueAt);
         }
@@ -35258,14 +35347,7 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
             }
         }
 
-        async function nbGenerateQuiz(r, stage, isExtra, dueAt, apiTask) {
-            if (!apiTask && !aiFeatureUsesCodex('reviewQuiz')) return runApiOperation('quiz', [r.id, r.createdAt, stage, isExtra, dueAt], [r.id, stage, isExtra, dueAt, r.createdAt]);
-            const reviewId = r.id;
-            const reviewGeneration = r.createdAt;
-            if (apiTask && (r.quizzes || []).some(q => q.apiOperationId === apiTask.id)) {
-                r.status = 'pending'; r.genFailed = false; delete r.pendingGen;
-                return;
-            }
+        async function nbGenerateQuiz(r, stage, isExtra, dueAt) {
             r.status = 'generating';
             r.genFailed = false;
             r.pendingGen = { stage, extra: !!isExtra, dueAt };
@@ -35274,7 +35356,7 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
             renderNbReviewList();
             nbUpdateReviewBtn();
             try {
-                const img = apiTask ? await apiTask.value('reviewImage', () => nbCaptureReviewImage(r)) : await nbCaptureReviewImage(r);
+                const img = await nbCaptureReviewImage(r);
                 const prevQuiz = (r.quizzes || []).slice(-1)[0];
                 const sys = i18n('prompt_review_quiz_system');
                 let task;
@@ -35284,27 +35366,20 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
                     task = i18n('prompt_review_quiz_tonight');
                 } else {
                     task = i18n('prompt_review_quiz_advanced', NB_STAGE_OFFSETS[stage], stage + 1, nbStageName(stage));
-                    if (prevQuiz && prevQuiz.content) task += i18n('prompt_previous_quiz', String(prevQuiz.content));
+                    if (prevQuiz && prevQuiz.content) task += i18n('prompt_previous_quiz', String(prevQuiz.content).slice(0, 1500));
                 }
                 if (prevQuiz && prevQuiz.completedAt) {
                     task += i18n('prompt_previous_quiz_result', prevQuiz.score ?? i18n('unknown'));
-                    if (prevQuiz.aiComment) task += i18n('prompt_ai_feedback', String(prevQuiz.aiComment));
+                    if (prevQuiz.aiComment) task += i18n('prompt_ai_feedback', String(prevQuiz.aiComment).slice(0, 2200));
                 }
                 const content = [];
                 if (img) content.push({ type: 'image_url', image_url: { url: img } });
-                else {
-                    const source = await nbLoadPageContent(r.pageId);
-                    if (source?.recognized?.text) task += i18n('prompt_recognized_note', source.recognized.text);
-                }
+                else if (nbState.content && nbState.content.recognized) task += i18n('prompt_recognized_note', nbState.content.recognized.text);
                 content.push({ type: 'text', text: task });
-                const messages = apiTask ? await apiTask.value('quizMessages', () => [{ role: 'user', content }]) : [{ role: 'user', content }];
-                const quizText = await callAI(sys, messages, { feature: 'reviewQuiz', apiTask });
-                r = nbFindReviewById(reviewId);
-                if (!r || r.createdAt !== reviewGeneration) return;
-                if (apiTask && (r.quizzes || []).some(q => q.apiOperationId === apiTask.id)) return;
+                const quizText = await callAI(sys, [{ role: 'user', content }], { feature: 'reviewQuiz' });
                 const generatedAt = new Date().toISOString();
-                (r.quizzes ||= []).push({
-                    id: nbUid('quiz'), apiOperationId: apiTask?.id,
+                r.quizzes.push({
+                    id: nbUid('quiz'),
                     stage, extra: !!isExtra, content: quizText,
                     generatedAt, updatedAt: generatedAt, dueAt, completedAt: null
                 });
@@ -35319,15 +35394,12 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
                 showToast(i18n('quiz_generated', isExtra ? i18n('practice') : nbStageName(stage)));
             } catch (e) {
                 console.error('[nb] Quiz 生成失败:', e);
-                r = nbFindReviewById(reviewId);
-                if (!r || r.createdAt !== reviewGeneration) return;
                 r.genFailed = true;
                 nbTouchReview(r);
                 saveData();
                 renderNbReviewList();
                 nbUpdateReviewBtn();
                 showToast(i18n('quiz_generation_failed', e.message));
-                if (apiTask) throw e;
             }
         }
 
@@ -35729,13 +35801,6 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
         }
 
         function nbHideQuiz() {
-            const body = document.getElementById('nbQuizBody');
-            const pageId = body?.dataset.recognitionPage;
-            if (pageId) {
-                delete body.dataset.recognitionPage;
-                delete body.dataset.recognitionNotebook;
-                void ApiRuntime.updateRecord('__api_recognition__:' + pageId, result => result ? { ...result, pending: false } : null).catch(console.error);
-            }
             document.getElementById('nbQuizModal').classList.remove('show');
             nbUpdateNativeSuspend();
         }
@@ -35766,13 +35831,16 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
         function parseNotebookReviewGradingResponse(text, { strict = false } = {}) {
             const raw = String(text || '');
             if (!strict) {
-                const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-                if (cleaned.startsWith('{') || cleaned.startsWith('[')) {
-                    return parseNotebookReviewGradingResponse(cleaned, { strict: true });
+                try {
+                    return robustParseJSONObject(raw);
+                } catch (error) {
+                    const scoreMatch = raw.match(/(\d+)\s*[\/／]\s*10/);
+                    return {
+                        score: scoreMatch ? parseInt(scoreMatch[1]) : 5,
+                        per_question: [],
+                        solutions: raw.replace(/```json|```/g, '').trim().substring(0, 3500)
+                    };
                 }
-                const scoreMatch = cleaned.match(/(?:^|[^\d])(10|[0-9])\s*[\/／]\s*10(?:\D|$)/);
-                if (!scoreMatch || !cleaned) throw ApiRuntime.failure('AI_PARSE_INVALID', i18n('review_grading_invalid_response'));
-                return { score: Number(scoreMatch[1]), per_question: [], solutions: cleaned };
             }
 
             const invalidStrictResponse = () => {
@@ -35842,22 +35910,6 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
             if (btn) { btn.disabled = true; btn.textContent = i18n('grading'); }
             showToast(i18n('grading_in_progress'));
 
-            if (!aiFeatureUsesCodex('reviewGrade')) {
-                await runApiOperation('quizGrade', [r.id, quiz.id], [r.id, quiz.id, userDrawing]);
-            } else {
-                await gradeNotebookReview(r.id, quiz.id, userDrawing);
-            }
-            if (btn && qzCurrentReviewId === r.id && qzCurrentQuizId === quiz.id) {
-                btn.disabled = false; btn.textContent = i18n('done');
-            }
-        }
-
-        async function gradeNotebookReview(reviewId, quizId, userDrawing, apiTask) {
-            let r = nbFindReviewById(reviewId);
-            let quiz = r?.quizzes?.find(q => q.id === quizId);
-            if (!quiz || (quiz.completedAt && quiz.apiGradeOperationId !== apiTask?.id)) return;
-            const btn = qzCurrentReviewId === reviewId && qzCurrentQuizId === quizId
-                ? document.getElementById('nbQuizFsCompleteBtn') : null;
             const systemPrompt = i18n('prompt_review_grade_system');
 
             try {
@@ -35868,7 +35920,7 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
                         { type: 'text', text: i18n('prompt_review_grade_user', quiz.content) }
                     ]
                 }];
-                const result = await callAI(systemPrompt, msgContent, { maxTokens: 20000, temperature: 0.3, feature: 'reviewGrade', apiTask });
+                const result = await callAI(systemPrompt, msgContent, { maxTokens: 4096, temperature: 0.3, feature: 'reviewGrade' });
                 if (!result) { showToast(i18n('ai_grading_empty')); if (btn) { btn.disabled = false; btn.textContent = i18n('done'); } return; }
 
                 const grading = parseNotebookReviewGradingResponse(result, {
@@ -35886,10 +35938,6 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
                 }
                 comment += i18n('solutions_section', grading.solutions || i18n('solutions_missing'));
 
-                r = nbFindReviewById(reviewId);
-                quiz = r?.quizzes?.find(q => q.id === quizId);
-                if (!quiz) return;
-                quiz.apiGradeOperationId = apiTask?.id;
                 quiz.userDrawing = userDrawing;
                 quiz.score = score;
                 quiz.aiComment = comment;
@@ -35905,35 +35953,18 @@ Previous unfinished question: ${pendingQuestion || '(none)'}`;
                 triggerSyncOnFileChange(r.pageId, 'notebook_review_update');
 
                 // 先把 AI 评分结果回显给用户，再基于评分结果生成下一次复习 Quiz。
-                if (qzCurrentReviewId === reviewId && qzCurrentQuizId === quizId) nbShowQuiz(r, quiz, true);
-                await nbAdvanceReviewAfterQuiz(r, apiTask);
+                nbShowQuiz(r, quiz, true);
+                nbAdvanceReviewAfterQuiz(r);
 
             } catch (e) {
                 console.error('[nb] Quiz 评分失败:', e);
-                if (apiTask) throw e;
                 showToast(i18n('grading_failed', e.message));
                 if (btn) { btn.disabled = false; btn.textContent = i18n('done'); }
             }
         }
 
         // Quiz 评分完成后推进复习流程
-        async function nbAdvanceReviewAfterQuiz(r, apiTask) {
-            if (apiTask) {
-                const plan = await apiTask.value('nextReview', async () => ({
-                    id: r.id,
-                    stage: r.extra > 0 ? r.stage : Math.min(4, r.stage + 1),
-                    extra: Math.max(0, (r.extra || 0) - 1),
-                    isExtra: r.extra > 0,
-                    complete: !(r.extra > 0) && r.stage >= 4,
-                    dueAt: r.extra > 0 ? nbStageDue({ createdAt: new Date().toISOString() }, 0) : nbStageDue(r, Math.min(4, r.stage + 1))
-                }));
-                r = nbFindReviewById(plan.id);
-                if (!r) return;
-                r.stage = plan.stage; r.extra = plan.extra;
-                if (plan.complete) { r.status = 'completed'; nbTouchReview(r); saveData(); return; }
-                await nbGenerateQuiz(r, plan.stage, plan.isExtra, plan.dueAt, apiTask);
-                return;
-            }
+        function nbAdvanceReviewAfterQuiz(r) {
             if ((r.extra || 0) > 0) {
                 r.extra--;
                 const due = nbStageDue({ createdAt: new Date().toISOString() }, 0);
