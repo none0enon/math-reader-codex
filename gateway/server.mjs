@@ -159,9 +159,7 @@ function requestSignal(request, response, timeoutMs) {
 }
 
 export function createGatewayHandler({ config, engine, token }) {
-  const lectureJobs = new LectureJobs(engine, config.maxQueueDepth, {
-    timeoutMs: config.lectureTimeoutMs,
-  });
+  const lectureJobs = new LectureJobs(engine, config.maxQueueDepth);
   return async function gatewayHandler(request, response) {
     let cancellation;
     try {
