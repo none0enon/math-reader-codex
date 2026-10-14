@@ -19992,8 +19992,6 @@
                 return await doAIRequest(backupConfig, systemPrompt, messages, options);
             }
 
-            // 主 API 各功能统一至少 20000 tokens，保留已有更高上限。
-            options = { ...options, maxTokens: Math.max(options.maxTokens || 0, 20000) };
             // 先尝试主API
             if (primaryConfig.url && primaryConfig.key) {
                 try {
