@@ -25923,7 +25923,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
 
             try {
                 let msgContent = [{ role: 'user', content: userMsg }];
-                const aiOptions = { maxTokens: 4096, feature: material.type === 'image' ? 'classroomPhoto' : 'classroomFile' };
+                const aiOptions = { feature: material.type === 'image' ? 'classroomPhoto' : 'classroomFile' };
 
                 // For images, include the image
                 if (material.type === 'image' && material.data) {
@@ -35838,7 +35838,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     return {
                         score: scoreMatch ? parseInt(scoreMatch[1]) : 5,
                         per_question: [],
-                        solutions: raw.replace(/```json|```/g, '').trim().substring(0, 3500)
+                        solutions: raw.replace(/```json|```/g, '').trim()
                     };
                 }
             }
@@ -35920,7 +35920,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                         { type: 'text', text: i18n('prompt_review_grade_user', quiz.content) }
                     ]
                 }];
-                const result = await callAI(systemPrompt, msgContent, { maxTokens: 4096, temperature: 0.3, feature: 'reviewGrade' });
+                const result = await callAI(systemPrompt, msgContent, { temperature: 0.3, feature: 'reviewGrade' });
                 if (!result) { showToast(i18n('ai_grading_empty')); if (btn) { btn.disabled = false; btn.textContent = i18n('done'); } return; }
 
                 const grading = parseNotebookReviewGradingResponse(result, {
