@@ -6129,6 +6129,8 @@
                 <div class="codex-gateway-status" id="codexGatewayStatus" role="status" aria-live="polite"></div>
                 <button type="button" class="fetch-models-btn" style="width:100%;margin-bottom:4px;"
                     onclick="testCodexGatewayConnection()" data-i18n="codex_test_connection">测试 Codex Gateway</button>
+                <button type="button" class="fetch-models-btn" id="codexLoginButton" hidden
+                    onclick="loginCodexGateway()" data-i18n="codex_login">重新登录 ChatGPT</button>
             </div>
             <div class="codex-gateway-hint" data-i18n="codex_gateway_scope_note">关闭时沿用下方主/备用 API；开启时下方 Gemini 配置仅用于音频。</div>
 
@@ -7260,6 +7262,11 @@
             }
         };
         Object.assign(I18N.zh, {
+            codex_login:'重新登录 ChatGPT', codex_login_page:'打开 ChatGPT 授权页',
+            codex_login_guide:'ChatGPT 授权已失效或尚未登录。点击「重新登录 ChatGPT」，在授权页输入设备代码；完成后点击「测试 Codex Gateway」。也可在网关电脑的 gateway 目录运行 npm run login。',
+            codex_reconnect_guide:'请在网关电脑的 gateway 目录运行 npm start；确认 VPN/Tailscale 已连接、HTTPS 网关转发正常，核对本页 Gateway URL 和访问令牌，然后重新测试连接。',
+            codex_token_guide:'网关访问令牌无效。请从网关电脑的 gateway/.state/gateway-token 重新复制令牌并保存，然后测试连接。',
+            codex_device_code:'设备代码：{0}。完成授权后重新测试连接。',
             ai_personal_greeting:'你好，{0}！{1}',
             app_title:'math-reader-codex', notification_enabled_body:'通知已开启',
             file_write_verify_failed:'文件写入校验失败', archived_label:'已归档', unsupported_online_format:'暂不支持在线阅读 {0} 格式', pdf_render_hint:'请转换为 PDF 后阅读', pdf_load_failed:'PDF 加载失败', pdf_load_failed_detail:'PDF 加载失败：', html2canvas_load_failed:'截图组件加载失败',
@@ -7279,6 +7286,11 @@
             indexeddb_unavailable:'IndexedDB 不可用', transaction_aborted:'事务被中止：{0}', unknown_reason:'未知原因', recording_transaction_failed:'录音事务失败', recording_transaction_aborted:'录音事务被中止', class_file_transaction_failed:'课堂文件事务失败', class_file_transaction_aborted:'课堂文件事务被中止', recording_storage_module_not_loaded:'录音存储模块未加载', class_lecture_content_empty:'课堂讲义内容为空', data_structure_corrupt:'数据结构损坏：books/papers 不是数组'
         });
         Object.assign(I18N.en, {
+            codex_login:'Sign in to ChatGPT again', codex_login_page:'Open ChatGPT authorization',
+            codex_login_guide:'ChatGPT authorization has expired or is missing. Click Sign in to ChatGPT again, enter the device code on the authorization page, then test the connection. You can also run npm run login in the gateway directory on the gateway computer.',
+            codex_reconnect_guide:'Run npm start in the gateway directory on the gateway computer. Check VPN/Tailscale, HTTPS forwarding, Gateway URL and token, then test the connection again.',
+            codex_token_guide:'The gateway token is invalid. Copy it again from gateway/.state/gateway-token on the gateway computer, save it, then test the connection.',
+            codex_device_code:'Device code: {0}. Test the connection after authorization.',
             ai_personal_greeting:'Hi, {0}! {1}',
             app_title:'math-reader-codex', notification_enabled_body:'Notifications are enabled',
             file_write_verify_failed:'File write verification failed', archived_label:'Archived', unsupported_online_format:'Online reading is not supported for {0} files', pdf_render_hint:'Convert the file to PDF to read it here', pdf_load_failed:'Failed to load PDF', pdf_load_failed_detail:'Failed to load PDF: ', html2canvas_load_failed:'Failed to load the screenshot component',
@@ -7298,6 +7310,11 @@
             indexeddb_unavailable:'IndexedDB is unavailable', transaction_aborted:'Transaction aborted: {0}', unknown_reason:'Unknown reason', recording_transaction_failed:'Recording transaction failed', recording_transaction_aborted:'Recording transaction was aborted', class_file_transaction_failed:'Class file transaction failed', class_file_transaction_aborted:'Class file transaction was aborted', recording_storage_module_not_loaded:'Recording storage module is not loaded', class_lecture_content_empty:'Class lecture content is empty', data_structure_corrupt:'Corrupted data structure: books/papers must be arrays'
         });
         Object.assign(I18N.fr, {
+            codex_login:'Se reconnecter à ChatGPT', codex_login_page:'Ouvrir l’autorisation ChatGPT',
+            codex_login_guide:'L’autorisation ChatGPT a expiré ou manque. Reconnectez-vous, saisissez le code sur la page d’autorisation, puis vérifiez la connexion. Vous pouvez aussi exécuter npm run login dans le dossier gateway sur l’ordinateur de la passerelle.',
+            codex_reconnect_guide:'Exécutez npm start dans le dossier gateway sur l’ordinateur de la passerelle. Vérifiez VPN/Tailscale, le transfert HTTPS, l’URL et le jeton, puis vérifiez la connexion.',
+            codex_token_guide:'Le jeton de passerelle est invalide. Recopiez gateway/.state/gateway-token depuis l’ordinateur de la passerelle, enregistrez et vérifiez la connexion.',
+            codex_device_code:'Code de l’appareil : {0}. Vérifiez la connexion après l’autorisation.',
             ai_personal_greeting:'Bonjour, {0} ! {1}',
             app_title:'math-reader-codex', notification_enabled_body:'Les notifications sont activées',
             file_write_verify_failed:"Échec de la vérification d’écriture du fichier", archived_label:'Archivé', unsupported_online_format:'La lecture en ligne des fichiers {0} n’est pas prise en charge', pdf_render_hint:'Convertissez le fichier en PDF pour le lire ici', pdf_load_failed:'Échec du chargement du PDF', pdf_load_failed_detail:'Échec du chargement du PDF : ', html2canvas_load_failed:'Échec du chargement du composant de capture',
@@ -7359,7 +7376,6 @@
             codex_audio_requires_gemini:"Codex est activé, mais l’audio nécessite toujours Gemini dans les réglages de l’API principale ou de secours."
         });
         Object.assign(I18N.zh, {
-            lecture_generation_queued:'正在排队，等待前一个任务完成…',
             lecture_generation_preparing:'正在准备章节资料…',
             lecture_generation_connecting:'正在连接 Codex…',
             lecture_generation_generating:'已提交，等待 Codex 输出…',
@@ -7373,7 +7389,6 @@
             lecture_generation_preview:'正文预览（生成中，尚未保存）'
         });
         Object.assign(I18N.en, {
-            lecture_generation_queued:'Queued, waiting for the previous request…',
             lecture_generation_preparing:'Preparing chapter material…',
             lecture_generation_connecting:'Connecting to Codex…',
             lecture_generation_generating:'Submitted, waiting for Codex output…',
@@ -7387,7 +7402,6 @@
             lecture_generation_preview:'Content preview (generating, not yet saved)'
         });
         Object.assign(I18N.fr, {
-            lecture_generation_queued:'En attente de la requête précédente…',
             lecture_generation_preparing:'Préparation des documents du chapitre…',
             lecture_generation_connecting:'Connexion à Codex…',
             lecture_generation_generating:'Requête envoyée, en attente de Codex…',
@@ -12186,11 +12200,13 @@
                 // OCR current page (or visible pages in continuous mode)
                 const pagesToOCR = penMode ? [currentPage] : getVisiblePageNumbers();
                 
-                for (const pageNum of pagesToOCR) {
-                    if (ocrTextCache[pageNum]) continue; // Skip if already OCR'd
+                const sourcePdf = pdfDoc;
+                const sourceCache = ocrTextCache;
+                await Promise.all(pagesToOCR.map(async pageNum => {
+                    if (sourceCache[pageNum]) return; // Skip if already OCR'd
                     
                     // Render page to image
-                    const page = await pdfDoc.getPage(pageNum);
+                    const page = await sourcePdf.getPage(pageNum);
                     const scale = 1.5; // Higher scale for better OCR
                     const viewport = page.getViewport({ scale });
                     
@@ -12214,12 +12230,12 @@
                     
                     const ocrText = await callAI(i18n('prompt_ocr'), messages, { feature: 'ocr' }) || '';
                     
-                    ocrTextCache[pageNum] = {
+                    sourceCache[pageNum] = {
                         text: ocrText,
                         timestamp: Date.now()
                     };
-                }
-                
+                }));
+                if (pdfDoc !== sourcePdf || ocrTextCache !== sourceCache) return;
                 showToast(i18n('toast_ocr_done'));
                 
                 // Re-run search with OCR data
@@ -12813,6 +12829,11 @@
             'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'
         ];
         let codexGatewayModels = [];
+        let codexConnectionCheck = 0;
+        let codexConnectionChecking = 0;
+        let codexRecoveryShown = '';
+        let codexLoginView = null;
+        let codexLoginStarting = false;
 
         function isPackagedAndroidRuntime() {
             return window.location?.hostname === 'appassets.androidplatform.net' ||
@@ -12833,14 +12854,86 @@
         function toggleCodexGatewayEnabled() {
             const toggle = document.getElementById('codexEnabledToggle');
             setCodexGatewayEnabledUi(!toggle?.classList.contains('on'));
+            invalidateCodexConnection();
         }
 
         function setCodexGatewayStatus(message, kind) {
             const status = document.getElementById('codexGatewayStatus');
             if (!status) return;
-            status.textContent = String(message || '');
+            status.replaceChildren();
+            String(message || '').split('\n').forEach((line, index) => {
+                if (index) status.appendChild(document.createElement('br'));
+                status.appendChild(document.createTextNode(line));
+            });
             status.className = 'codex-gateway-status' + (message ? ' show' : '') +
                 (kind ? ' ' + kind : '');
+        }
+
+        function invalidateCodexConnection() {
+            codexConnectionCheck++;
+            codexLoginView = null;
+            setCodexGatewayStatus('');
+            document.getElementById('codexLoginButton').hidden = true;
+        }
+
+        function showCodexRecovery(error, recovery, open = true) {
+            if (open && !document.getElementById('apiModal')?.classList.contains('show')) {
+                showAPIModal({ checkConnection: false });
+            }
+            const code = error?.code || '';
+            const login = recovery === 'login' || code === 'chatgpt_login_required';
+            const key = login ? 'codex_login_guide' : code === 'unauthorized' ? 'codex_token_guide' : 'codex_reconnect_guide';
+            setCodexGatewayStatus((error?.message ? error.message + '\n\n' : '') + i18n(key), 'error');
+            document.getElementById('codexLoginButton').hidden = !login;
+        }
+
+        function handleCodexRequestError(error) {
+            const code = error?.code || '';
+            if (code === 'chatgpt_login_required' || code === 'unauthorized' ||
+                /^(?:codex_gateway_(?:network_error|timeout|stream_disconnected|response_invalid|upgrade_required|url_required|token_required)|codex_unavailable|codex_timeout)$/.test(code)) {
+                codexConnectionCheck++;
+                const identity = code + ':' + (appData.settings.codexGatewayUrl || '');
+                showCodexRecovery(error, null, codexRecoveryShown !== identity);
+                codexRecoveryShown = identity;
+            }
+        }
+
+        async function loginCodexGateway() {
+            const button = document.getElementById('codexLoginButton');
+            button.disabled = true;
+            codexLoginStarting = true;
+            ++codexConnectionCheck;
+            const config = codexGatewayFormConfig();
+            // Reserve the window during the click so popup blocking cannot hide it.
+            const popup = window.open('about:blank', '_blank');
+            if (popup) popup.opener = null;
+            try {
+                const result = await codexGatewayModule().requestJson(config, '/v1/login', {
+                    method: 'POST', body: {}, timeoutMs: 30_000
+                });
+                if (JSON.stringify(config) !== JSON.stringify(codexGatewayFormConfig())) { popup?.close(); return; }
+                const url = new URL(result.verificationUrl);
+                if (url.protocol !== 'https:' || url.hostname !== 'auth.openai.com' || url.pathname !== '/codex/device') {
+                    throw new Error('Invalid ChatGPT device authorization URL');
+                }
+                codexLoginView = { code: result.userCode, url: url.href, expiresAt: Date.now() + 10 * 60_000 };
+                renderCodexLoginView();
+                if (popup) popup.location.replace(url.href);
+            } catch (error) {
+                popup?.close();
+                showCodexRecovery(error, error.code === 'codex_gateway_network_error' || error.code === 'unauthorized' ? null : 'login', false);
+            } finally { button.disabled = false; codexLoginStarting = false; }
+        }
+
+        function renderCodexLoginView() {
+            setCodexGatewayStatus(i18n('codex_device_code', codexLoginView.code));
+            const link = document.createElement('a');
+            link.href = codexLoginView.url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+            link.textContent = i18n('codex_login_page');
+            const status = document.getElementById('codexGatewayStatus');
+            status.appendChild(document.createElement('br'));
+            status.appendChild(link);
+            document.getElementById('codexLoginButton').hidden = false;
         }
 
         function codexGatewayModule() {
@@ -12924,34 +13017,54 @@
                 }
                 select.style.display = codexGatewayModels.length ? 'block' : 'none';
                 syncCodexReasoningEfforts();
-                setCodexGatewayStatus(i18n('codex_models_loaded', codexGatewayModels.length), 'success');
+                await testCodexGatewayConnection({ notify: false });
                 showToast(i18n('codex_models_loaded', codexGatewayModels.length));
             } catch (error) {
-                setCodexGatewayStatus(error.message || String(error), 'error');
+                showCodexRecovery(error, null, false);
                 showToast(i18n('toast_fetch_models_failed') + (error.message || error));
             }
         }
 
-        async function testCodexGatewayConnection() {
+        async function testCodexGatewayConnection({ notify = true, recover = false } = {}) {
+            const modalOpen = document.getElementById('apiModal')?.classList.contains('show');
+            const config = modalOpen ? codexGatewayFormConfig() : codexGatewaySettingsConfig();
+            const revision = ++codexConnectionCheck;
+            codexConnectionChecking++;
+            const pendingLogin = codexLoginView && Date.now() < codexLoginView.expiresAt;
             try {
-                setCodexGatewayStatus(i18n('codex_status_checking'));
-                const status = await codexGatewayModule().getStatus(codexGatewayFormConfig());
+                if (!pendingLogin) {
+                    setCodexGatewayStatus(i18n('codex_status_checking'));
+                    document.getElementById('codexLoginButton').hidden = true;
+                }
+                const status = await codexGatewayModule().getStatus(config, { timeoutMs: 28_000 });
+                if (revision !== codexConnectionCheck) return;
                 const authType = status?.auth?.type === 'chatgpt' ? 'chatgpt' : 'none';
                 const authLabel = i18n(authType === 'chatgpt' ? 'codex_auth_chatgpt' : 'codex_auth_none');
-                const ready = status?.ready === true;
-                setCodexGatewayStatus(
-                    i18n(ready ? 'codex_status_ready' : 'codex_status_not_ready', authLabel),
-                    ready ? 'success' : 'error'
-                );
-                showToast(i18n(ready ? 'toast_connection_success' : 'toast_connection_failed') +
+                const ready = status?.ready === true && !!status.checkedAt && !status.statusError;
+                if (ready) {
+                    codexRecoveryShown = '';
+                    codexLoginView = null;
+                    document.getElementById('codexLoginButton').hidden = true;
+                    setCodexGatewayStatus(i18n('codex_status_ready', authLabel), 'success');
+                } else if (pendingLogin && status.recovery === 'login') {
+                    renderCodexLoginView();
+                } else {
+                    const error = { code: status.statusError || 'codex_gateway_upgrade_required',
+                        message: i18n('codex_status_not_ready', authLabel) };
+                    showCodexRecovery(error, status.recovery, recover && !codexRecoveryShown);
+                    codexRecoveryShown = error.code;
+                }
+                if (notify) showToast(i18n(ready ? 'toast_connection_success' : 'toast_connection_failed') +
                     (ready ? '' : i18n('codex_status_not_ready', authLabel)));
             } catch (error) {
-                setCodexGatewayStatus(error.message || String(error), 'error');
-                showToast(i18n('toast_connection_failed') + (error.message || error));
-            }
+                if (revision !== codexConnectionCheck) return;
+                showCodexRecovery(error, null, recover && !codexRecoveryShown);
+                codexRecoveryShown = error.code || 'network';
+                if (notify) showToast(i18n('toast_connection_failed') + (error.message || error));
+            } finally { codexConnectionChecking--; }
         }
 
-        function showAPIModal() {
+        function showAPIModal({ checkConnection = true } = {}) {
             // 加载当前设置到modal
             const s = appData.settings;
             document.getElementById('codexGatewayUrl').value = s.codexGatewayUrl || '';
@@ -12959,7 +13072,7 @@
             document.getElementById('codexModel').value = s.codexModel || '';
             setCodexGatewayEnabledUi(!!s.codexEnabled);
             updateCodexReasoningEfforts(null, s.codexReasoningEffort || '');
-            setCodexGatewayStatus('');
+            invalidateCodexConnection();
             document.getElementById('modalAiApiUrl').value = s.aiApiUrl || '';
             document.getElementById('modalAiApiKey').value = s.aiApiKey || '';
             document.getElementById('modalAiModel').value = s.aiModel || '';
@@ -12973,7 +13086,26 @@
             if (s.backupKey) document.getElementById('backupKey').value = s.backupKey;
             if (s.backupModel) document.getElementById('backupModel').value = s.backupModel;
             showModal('apiModal');
+            if (checkConnection && s.codexEnabled) void testCodexGatewayConnection({ notify: false });
         }
+
+        function monitorCodexConnection() {
+            if (document.hidden || codexConnectionChecking || codexLoginStarting) return;
+            const modalOpen = document.getElementById('apiModal')?.classList.contains('show');
+            const enabled = modalOpen ? document.getElementById('codexEnabledToggle')?.classList.contains('on') : appData.settings.codexEnabled;
+            if (!enabled) return;
+            const config = modalOpen ? codexGatewayFormConfig() : codexGatewaySettingsConfig();
+            if (config.baseUrl && config.token) void testCodexGatewayConnection({ notify: false, recover: true });
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            for (const id of ['codexGatewayUrl', 'codexGatewayToken']) {
+                document.getElementById(id)?.addEventListener('input', invalidateCodexConnection);
+            }
+            setInterval(monitorCodexConnection, 30_000);
+            monitorCodexConnection();
+        });
+        window.addEventListener('focus', monitorCodexConnection);
+        document.addEventListener('visibilitychange', monitorCodexConnection);
         
         function saveAPISettings() {
             const codexEnabled = document.getElementById('codexEnabledToggle').classList.contains('on');
@@ -12998,6 +13130,8 @@
             appData.settings.codexGatewayToken = codexConfig.token;
             appData.settings.codexModel = document.getElementById('codexModel').value.trim();
             appData.settings.codexReasoningEffort = document.getElementById('codexReasoningEffort').value;
+            invalidateCodexConnection();
+            codexRecoveryShown = '';
             appData.settings.apiProvider = document.getElementById('apiProvider').value;
             appData.settings.aiApiUrl = document.getElementById('modalAiApiUrl').value;
             appData.settings.aiApiKey = document.getElementById('modalAiApiKey').value;
@@ -18908,6 +19042,7 @@
         }
 
         let readerChatDoc = null;
+        const readerChatStreams = new Set();
         const readerChatSyncToasts = new Map();
 
         function getReaderChatDoc(docId, question = null) {
@@ -19064,6 +19199,9 @@
 
                 setupReaderChatMessage(messageDiv, index);
             });
+            for (const pending of readerChatStreams) {
+                if (pending.dataset.docId === currentDoc.id) container.appendChild(pending);
+            }
             ensureChatSelectionHandlers();
             ensureChatHighlightOverlay();
             container.scrollTop = container.scrollHeight;
@@ -19470,7 +19608,9 @@
             const container = document.getElementById('readerChatContainer');
             const loadingDiv = document.createElement('div');
             loadingDiv.className = 'chat-message ai';
-            loadingDiv.id = 'readerChatLoading';
+            loadingDiv.id = 'readerChatLoading-' + crypto.randomUUID();
+            loadingDiv.dataset.docId = currentDoc.id;
+            readerChatStreams.add(loadingDiv);
             const _aiAvatar = getAIAvatar();
             const _aiName = getAIName();
             const _aiAvatarHtml = _aiAvatar
@@ -19481,15 +19621,19 @@
             container.scrollTop = container.scrollHeight;
 
             try {
-                const result = await callReaderAI(systemPrompt, apiMessages, { pdfAttachment, feature: chatFeature });
-                if (readerChatDoc?.id === currentDoc.id) document.getElementById('readerChatLoading')?.remove();
+                const result = await callReaderAI(systemPrompt, apiMessages, { pdfAttachment, feature: chatFeature,
+                    onProgress: streamChatPreview(loadingDiv, container, () => readerChatDoc?.id === currentDoc.id, true) });
+                readerChatStreams.delete(loadingDiv);
+                loadingDiv.remove();
                 if (result) {
+                    history = loadReaderChatHistory(currentDoc.id, currentDoc.question);
                     history.push({ role: 'assistant', content: result });
                     saveReaderChatHistory(currentDoc.id, history, currentDoc.question);
                     renderReaderChatHistory(currentDoc.id);
                 }
             } catch (err) {
-                if (readerChatDoc?.id === currentDoc.id) document.getElementById('readerChatLoading')?.remove();
+                readerChatStreams.delete(loadingDiv);
+                loadingDiv.remove();
                 showToast(i18n('toast_regen_failed') + err.message);
             }
         }
@@ -19616,7 +19760,9 @@
             const container = document.getElementById('readerChatContainer');
             const loadingDiv = document.createElement('div');
             loadingDiv.className = 'chat-message ai';
-            loadingDiv.id = 'readerChatLoading';
+            loadingDiv.id = 'readerChatLoading-' + crypto.randomUUID();
+            loadingDiv.dataset.docId = currentDoc.id;
+            readerChatStreams.add(loadingDiv);
             const _aiAvatar1 = getAIAvatar();
             const _aiName1 = getAIName();
             const _aiAvatarHtml1 = _aiAvatar1
@@ -19632,15 +19778,19 @@
             container.scrollTop = container.scrollHeight;
 
             try {
-                const result = await callReaderAI(systemPrompt, apiMessages, { pdfAttachment, feature: chatFeature });
-                if (readerChatDoc?.id === currentDoc.id) document.getElementById('readerChatLoading')?.remove();
+                const result = await callReaderAI(systemPrompt, apiMessages, { pdfAttachment, feature: chatFeature,
+                    onProgress: streamChatPreview(loadingDiv, container, () => readerChatDoc?.id === currentDoc.id, true) });
+                readerChatStreams.delete(loadingDiv);
+                loadingDiv.remove();
 
                 if (result) {
+                    history = loadReaderChatHistory(currentDoc.id, currentDoc.question);
                     history.push({ role: 'assistant', content: result });
                     saveReaderChatHistory(currentDoc.id, history, currentDoc.question);
                     renderReaderChatHistory(currentDoc.id);
                 } else {
-                    if (readerChatDoc?.id === currentDoc.id) document.getElementById('readerChatLoading')?.remove();
+                    readerChatStreams.delete(loadingDiv);
+                loadingDiv.remove();
                     const replies = [
                         i18n('reader_fallback_review'),
                         i18n('reader_fallback_example'),
@@ -19649,13 +19799,16 @@
                         i18n('chat_api_hint')
                     ];
                     const fallback = replies[Math.floor(Math.random() * replies.length)];
+                    history = loadReaderChatHistory(currentDoc.id, currentDoc.question);
                     history.push({ role: 'assistant', content: fallback });
                     saveReaderChatHistory(currentDoc.id, history, currentDoc.question);
                     renderReaderChatHistory(currentDoc.id);
                 }
             } catch (e) {
                 console.error('Reader chat error:', e);
-                if (readerChatDoc?.id === currentDoc.id) document.getElementById('readerChatLoading')?.remove();
+                readerChatStreams.delete(loadingDiv);
+                loadingDiv.remove();
+                history = loadReaderChatHistory(currentDoc.id, currentDoc.question);
                 history.push({ role: 'assistant', content: i18n('request_failed') + (e.message || i18n('unknown_error')) });
                 saveReaderChatHistory(currentDoc.id, history, currentDoc.question);
                 renderReaderChatHistory(currentDoc.id);
@@ -20022,20 +20175,73 @@
             throw new Error(i18n('configure_api_first'));
         }
 
+        async function collectAIResults(requests) {
+            const results = await Promise.allSettled(requests);
+            const failed = results.find(result => result.status === 'rejected');
+            if (failed) throw failed.reason;
+            return results.map(result => result.value);
+        }
+
         async function doCodexGatewayRequest(systemPrompt, messages, options = {}) {
             const settings = appData.settings || {};
-            const result = await codexGatewayModule().ask(
-                codexGatewaySettingsConfig(settings),
-                {
-                    systemPrompt,
-                    messages,
-                    model: settings.codexModel || '',
-                    reasoningEffort: settings.codexReasoningEffort || '',
-                    pdfAttachment: options.pdfAttachment
-                },
-                { timeoutMs: codexGatewayModule().MAX_REQUEST_TIMEOUT_MS, lectureJob: options.lectureJob }
-            );
-            return result.text;
+            try {
+                const result = await codexGatewayModule().ask(
+                    codexGatewaySettingsConfig(settings),
+                    {
+                        systemPrompt,
+                        messages,
+                        model: settings.codexModel || '',
+                        reasoningEffort: settings.codexReasoningEffort || '',
+                        pdfAttachment: options.pdfAttachment
+                    },
+                    { timeoutMs: codexGatewayModule().MAX_REQUEST_TIMEOUT_MS, signal: options.signal,
+                        onProgress: options.onProgress,
+                        lectureJob: options.lectureJob && { ...options.lectureJob, onProgress: progress => {
+                            options.lectureJob.onProgress?.(progress);
+                            if (progress.stage === 'reconnecting') handleCodexRequestError({
+                                code: 'codex_gateway_network_error', message: ''
+                            });
+                        } }
+                    }
+                );
+                return result.text;
+            } catch (error) {
+                handleCodexRequestError(error);
+                throw error;
+            }
+        }
+
+        // One transport contract for text, image, PDF and structured results.
+        // Each caller receives cumulative answer text and saves only completion.
+        async function consumeAIStream(response, provider, options = {}) {
+            if (!String(response.headers.get('content-type') || '').includes('text/event-stream')) {
+                throw new Error('This API must support text/event-stream responses.');
+            }
+            let text = '', complete = false;
+            const started = Date.now();
+            await codexGatewayModule().readEventStream(response, (event, raw) => {
+                if (raw === '[DONE]') { complete = true; return true; }
+                const data = JSON.parse(raw);
+                if (event === 'error' || data.error) throw new Error(data.error?.message || data.message || 'AI stream failed');
+                if (provider === 'gemini') {
+                    const candidate = data.candidates?.[0];
+                    text += (candidate?.content?.parts || []).filter(part => !part.thought).map(part => part.text || '').join('');
+                    if (candidate?.finishReason) complete = true;
+                } else if (provider === 'claude') {
+                    if (event === 'content_block_start' && data.content_block?.type === 'text') text += data.content_block.text || '';
+                    if (event === 'content_block_delta' && data.delta?.type === 'text_delta') text += data.delta.text || '';
+                    if (event === 'message_stop') { complete = true; return true; }
+                } else {
+                    const choice = data.choices?.[0];
+                    text += choice?.delta?.content || '';
+                    if (choice?.finish_reason) complete = true;
+                }
+                codexGatewayModule().reportProgress(options.onProgress, {
+                    stage: text ? 'writing' : 'generating', partialText: text, elapsedMs: Date.now() - started
+                });
+            });
+            if (!complete) throw new Error('The AI stream ended before completion.');
+            return text;
         }
 
         async function doConfiguredGeminiAudioRequest(systemPrompt, messages, options = {}) {
@@ -20059,6 +20265,12 @@
             const useGemini = isGeminiUrl(config.url) || config.provider === 'custom';
             if (useGemini) {
                 return await doGeminiRequest(config, systemPrompt, messages, options);
+            }
+
+            if (config.provider === 'claude' || /anthropic\.com/.test(config.url)) {
+                const claudeMessages = options.pdfAttachment
+                    ? await embedPdfForClaude(messages, options.pdfAttachment) : messages;
+                return doClaudeRequest(config, systemPrompt, claudeMessages, options);
             }
 
             // OpenAI / DeepSeek / Claude / 其他 OpenAI 兼容：用 chat/completions 协议
@@ -20109,16 +20321,18 @@
                 ],
                 max_tokens: options.maxTokens || 8192,
                 temperature: options.temperature || 0.7,
-                stream: options.stream || false
+                stream: true
             };
             
             const response = await fetch(config.url, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'Accept': 'text/event-stream',
                     'Authorization': 'Bearer ' + config.key
                 },
-                body: JSON.stringify(requestBody)
+                body: JSON.stringify(requestBody),
+                signal: options.signal
             });
             
             if (!response.ok) {
@@ -20126,12 +20340,7 @@
                 throw new Error(i18n('api_error', response.status, errText));
             }
             
-            if (options.stream) {
-                return response;
-            }
-            
-            const data = await response.json();
-            return data.choices?.[0]?.message?.content || null;
+            return consumeAIStream(response, 'openai', options);
         }
 
         // 把 PDF 文本提取，作为"附件文本"拼到 messages 最后一条 user 内容前
@@ -20169,10 +20378,20 @@
             return out;
         }
 
-        // Claude Messages API 封装（仅用于带 PDF 附件的情形）
+        // Claude Messages API 封装
         async function doClaudeRequest(config, systemPrompt, messages, options = {}) {
+            messages = messages.map(message => ({ ...message,
+                content: Array.isArray(message.content) ? message.content.map(block => {
+                    if (block.type !== 'image_url') return block;
+                    const image = typeof block.image_url === 'string' ? block.image_url : block.image_url?.url;
+                    const match = /^data:(image\/[^;]+);base64,(.+)$/.exec(image || '');
+                    if (!match) throw new Error('Claude requires a base64 image for this request.');
+                    return { type: 'image', source: { type: 'base64', media_type: match[1], data: match[2] } };
+                }) : message.content
+            }));
             const body = {
                 model: config.model,
+                stream: true,
                 max_tokens: options.maxTokens || 8192,
                 temperature: options.temperature != null ? options.temperature : 0.7,
                 messages,
@@ -20186,17 +20405,14 @@
                     'anthropic-version': '2023-06-01',
                     'anthropic-dangerous-direct-browser-access': 'true'
                 },
-                body: JSON.stringify(body)
+                body: JSON.stringify(body),
+                signal: options.signal
             });
             if (!response.ok) {
                 const errText = await response.text().catch(() => '');
                 throw new Error(i18n('claude_api_error', response.status, errText));
             }
-            const data = await response.json();
-            if (Array.isArray(data.content)) {
-                return data.content.filter(x => x.type === 'text').map(x => x.text).join('');
-            }
-            return null;
+            return consumeAIStream(response, 'claude', options);
         }
 
         // 把 PDF 附件嵌入到 Claude messages 最后一条 user 消息里（document 块）
@@ -20232,7 +20448,7 @@
         }
 
         // Google Gemini 原生协议调用
-        // - URL: {base}/models/{model}:generateContent?key={key}
+        // - URL: {base}/models/{model}:streamGenerateContent?alt=sse&key={key}
         // - 鉴权走 URL 的 key 参数
         // - messages/system 映射到 contents / systemInstruction
         // - 温度等参数从 options 取（与自定义渠道一致）；maxOutputTokens 默认 8192
@@ -20314,27 +20530,18 @@
                 body.systemInstruction = { parts: [{ text: String(systemPrompt) }] };
             }
 
-            const url = base + '/models/' + encodeURIComponent(modelName) + ':generateContent?key=' + encodeURIComponent(config.key);
+            const url = base + '/models/' + encodeURIComponent(modelName) + ':streamGenerateContent?alt=sse&key=' + encodeURIComponent(config.key);
             const response = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
+                body: JSON.stringify(body),
+                signal: options.signal
             });
             if (!response.ok) {
                 const errText = await response.text().catch(() => '');
                 throw new Error(i18n('api_error', response.status, errText));
             }
-            const data = await response.json();
-            const candidate = data.candidates?.[0];
-            const finishReason = candidate?.finishReason;
-            if (finishReason && finishReason !== 'STOP') {
-                console.warn('Gemini finishReason:', finishReason, '— 输出可能被截断');
-            }
-            const parts = candidate?.content?.parts;
-            if (Array.isArray(parts) && parts.length > 0) {
-                return parts.map(p => p.text || '').join('');
-            }
-            return null;
+            return consumeAIStream(response, 'gemini', options);
         }
 
         // 构造 Gemini contents，带 PDF。超过 18MB 走 Files API。
@@ -20758,12 +20965,10 @@
             }
 
             const leftEnd = Math.floor((startPage + endPage) / 2);
-            const left = await generateOutlinePageRange(
-                sourcePdf, userText, bookTitle, totalPages, startPage, leftEnd, draft, saveDraft
-            );
-            const right = await generateOutlinePageRange(
-                sourcePdf, userText, bookTitle, totalPages, leftEnd + 1, endPage, draft, saveDraft
-            );
+            const [left, right] = await collectAIResults([
+                generateOutlinePageRange(sourcePdf, userText, bookTitle, totalPages, startPage, leftEnd, draft, saveDraft),
+                generateOutlinePageRange(sourcePdf, userText, bookTitle, totalPages, leftEnd + 1, endPage, draft, saveDraft)
+            ]);
             return [...left, ...right];
         }
 
@@ -20858,14 +21063,13 @@ ${i18n('prompt_outline_gen')}`;
                     const ranges = buildOutlinePageRanges(
                         totalPages, outlineChunkMaxPages, pdfInfo.outlinePages
                     );
-                    for (let chunkIndex = 0; chunkIndex < ranges.length; chunkIndex++) {
-                        const { startPage: chunkStart, endPage: chunkEnd } = ranges[chunkIndex];
+                    const chunks = await collectAIResults(ranges.map(async ({ startPage: chunkStart, endPage: chunkEnd }, chunkIndex) => {
                         showToast(i18n('toast_ai_generating_outline_chunk', chunkIndex + 1, ranges.length, chunkStart, chunkEnd));
-                        const chunkChapters = await generateOutlinePageRange(
+                        return generateOutlinePageRange(
                             sourcePdf, userText, bookTitle, totalPages, chunkStart, chunkEnd, draft, saveDraft
                         );
-                        chapters.push(...chunkChapters);
-                    }
+                    }));
+                    chapters = chunks.flat();
                 }
 
                 // callAI 耗时较长，期间 performAutoSync 可能替换了 appData.books，
@@ -20993,7 +21197,7 @@ ${i18n('prompt_outline_gen')}`;
             const container = document.getElementById('lectureViewerContent');
             const stage = container.querySelector('[data-generation-stage]');
             if (!stage) return;
-            const stages = ['queued', 'preparing', 'connecting', 'generating', 'reasoning', 'writing', 'reconnecting', 'retrying', 'saving'];
+            const stages = ['preparing', 'connecting', 'generating', 'reasoning', 'writing', 'reconnecting', 'retrying', 'saving'];
             stage.textContent = i18n('lecture_generation_' + (stages.includes(progress.stage) ? progress.stage : 'generating'));
             const seconds = Math.max(0, Math.floor((Number(progress.elapsedMs) || 0) / 1000));
             container.querySelector('[data-generation-elapsed]').textContent = i18n('lecture_generation_elapsed',
@@ -21107,6 +21311,7 @@ ${i18n('prompt_lecture_gen')}`;
                     maxTokens: 8192,
                     pdfAttachment,
                     lectureJob,
+                    onProgress,
                     feature: 'lecture'
                 });
 
@@ -23213,6 +23418,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             container.appendChild(messageDiv);
             if (!isUser && renderRichText) renderLectureMath(messageDiv);
             container.scrollTop = container.scrollHeight;
+            return messageDiv;
         }
 
         function addTypingIndicator(container) {
@@ -23234,6 +23440,20 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             `;
             container.appendChild(typing);
             container.scrollTop = container.scrollHeight;
+            return typing;
+        }
+
+        function streamChatPreview(element, container, guard = () => true, richText = false) {
+            let updatedAt = 0;
+            return progress => {
+                if (!progress.partialText || !element.isConnected || !guard()) return;
+                if (Date.now() - updatedAt < 100) return;
+                updatedAt = Date.now();
+                const bubble = element.querySelector('.chat-bubble');
+                if (richText) bubble.innerHTML = renderChatMarkdownLatex(progress.partialText, true);
+                else bubble.textContent = progress.partialText;
+                container.scrollTop = container.scrollHeight;
+            };
         }
 
         function removeTypingIndicator() {
@@ -23252,7 +23472,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             const renderResponseMath = !!window._wrongAIChatOverride;
             const chatFeature = window._wrongAIChatOverride ? 'wrongBatchChat' : 'chat';
 
-            addTypingIndicator(container);
+            const typing = addTypingIndicator(container);
 
             try {
                 // 错题复用阅读问 AI 的提示词，仅普通聊天注入 AI 人设。
@@ -23289,13 +23509,14 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     if (isFirstUserTurn) window._wrongAIImages = [];
                 }
 
-                const result = await callAI(systemPrompt, recentMessages, { maxTokens: 8192, feature: chatFeature });
+                const result = await callAI(systemPrompt, recentMessages, { maxTokens: 8192, feature: chatFeature,
+                    onProgress: streamChatPreview(typing, container, () => true, renderResponseMath) });
 
-                removeTypingIndicator();
-                addChatMessage(container, false, result || i18n('chat_no_answer'), renderResponseMath);
+                const answer = addChatMessage(container, false, result || i18n('chat_no_answer'), renderResponseMath);
+                typing.replaceWith(answer);
             } catch (err) {
-                removeTypingIndicator();
-                addChatMessage(container, false, i18n('chat_call_failed') + err.message);
+                const failure = addChatMessage(container, false, i18n('chat_call_failed') + err.message);
+                typing.replaceWith(failure);
             }
         }
 
@@ -25885,9 +26106,9 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             renderClassroomSessionDetail(folder, session, type);
 
             // Auto-generate AI notes for each uploaded material
-            for (const id of added) {
+            await Promise.all(added.map(async id => {
                 const found = _findRecordingMaterial(id);
-                if (!found) continue;
+                if (!found) return;
                 try {
                     if (found.material.type === 'recording') {
                         await generateClassroomRecordingNote(found.type, found.folder.id,
@@ -25897,7 +26118,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                             found.session.id, found.index);
                     }
                 } catch (e) { /* 单个素材失败不阻止后续素材生成 */ }
-            }
+            }));
         }
 
         async function generateClassroomNoteForMaterial(type, folderId, sessionId, materialIndex, options = {}) {
@@ -27863,7 +28084,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             showToast(i18n('toast_deleted'));
         }
 
-        // ---- 全部评分：依次发送所有有书写内容的题目给AI评分 ----
+        // ---- 全部评分：并发发送独立题目的评分请求 ----
         async function gradeAllExQuestions(folderId, taskId) {
             closeLongPressMenu();
             const data = getExercisesData();
@@ -27909,9 +28130,9 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             let graded = 0;
             let failed = 0;
 
-            for (const item of toGrade) {
+            await Promise.all(toGrade.map(async item => {
                 const { index: capturedIndex, questionIdentity, latex, allPages, gradingPages, gradingGuard } = item;
-                if (!gradingGuard()) continue;
+                if (!gradingGuard()) return;
                 showToast(i18n('grading_progress', graded + 1, toGrade.length, capturedIndex + 1));
 
                 let gradedCloudCommit = null;
@@ -27919,8 +28140,8 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     const msgContent = [{ role: 'user', content: exGradingContent(gradingPages, latex) }];
 
                     const result = await callAI(systemPrompt, msgContent, { maxTokens: 8192, temperature: 0.3, feature: 'gradeAll' });
-                    if (!gradingGuard()) continue;
-                    if (!result) { failed++; continue; }
+                    if (!gradingGuard()) return;
+                    if (!result) { failed++; return; }
 
                     const grading = parseExerciseGradingResponse(result, {
                         strict: aiFeatureUsesCodex('gradeAll')
@@ -27945,10 +28166,10 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                         : capturedIndex;
 
                     // 先按原页位把完整页槽写稳，再提交元数据；空白页不会被压缩或删除。
-                    if (!gradingGuard()) continue;
+                    if (!gradingGuard()) return;
                     const pagesSaved = await exSaveGradedPages(
                         `exercise_drawing_${taskId}_${storageQuestionIndex}`, allPages, gradingGuard);
-                    if (!pagesSaved || !gradingGuard()) continue;
+                    if (!pagesSaved || !gradingGuard()) return;
 
                     // 页面写入期间也可能发生替换；最后一个 await 后再次获取 canonical 对象。
                     currentData = getExercisesData();
@@ -27967,7 +28188,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                         Number(currentQ.userDrawingPages) || 0,
                         allPages.length
                     );
-                    if (!gradingGuard()) continue;
+                    if (!gradingGuard()) return;
                     const gradedDrawingCommitId = exCreateGradedDrawingCommitId();
                     gradedCloudCommit = exStageGradedPagesCloudCommit(
                         `exercise_drawing_${taskId}_${storageQuestionIndex}`, allPages.length);
@@ -28009,7 +28230,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     console.error(`第${capturedIndex + 1}题评分失败:`, err);
                     failed++;
                 }
-            }
+            }));
 
             const latestFolder = getExercisesData().folders.find(f => f.id === folderId);
             if (latestFolder) renderExerciseFolderContent(latestFolder);
@@ -28458,11 +28679,10 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             const folderId = currentExerciseFolder.folderId;
             if (!getExercisesData().folders.some(f => f.id === folderId)) return;
 
-            for (let i = 0; i < files.length; i++) {
-                const file = files[i];
+            await Promise.all(Array.from(files, async file => {
                 const isImage = file.type.startsWith('image/');
                 const isPdf = file.type === 'application/pdf';
-                if (!isImage && !isPdf) continue;
+                if (!isImage && !isPdf) return;
 
                 showToast(i18n('processing_file', file.name));
 
@@ -28478,7 +28698,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     const folder = getExercisesData().folders.find(f => f.id === folderId);
                     if (!folder) {
                         try { await deleteFileData('exercise_' + fileId); } catch (e) {}
-                        break;
+                        return;
                     }
 
                     // Create task
@@ -28508,7 +28728,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     console.error('上传习题失败:', err);
                     showToast(i18n('toast_failed') + err.message);
                 }
-            }
+            }));
 
             e.target.value = '';
         }
@@ -34972,16 +35192,15 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
             await nbSavePageNow();
             let done = 0, skipped = 0;
             showToast(i18n('recognizing_handwriting_start'));
-            for (let i = 0; i < nb.pages.length; i++) {
-                const pg = nb.pages[i];
+            await Promise.all(nb.pages.map(async (pg, i) => {
                 let c;
                 try {
                     const raw = await getFileData('nbpage_' + pg.id);
                     c = raw ? JSON.parse(raw) : null;
                 } catch (e) { c = null; }
-                if (!c || !(c.strokes || []).some(s => s.tool === 'pen' || s.tool === 'hl')) { skipped++; continue; }
+                if (!c || !(c.strokes || []).some(s => s.tool === 'pen' || s.tool === 'hl')) { skipped++; return; }
                 const sig = nbStrokeSig(c);
-                if (c.recognized && c.recognized.sig === sig) { skipped++; continue; }
+                if (c.recognized && c.recognized.sig === sig) { skipped++; return; }
                 try {
                     const cv = await nbRenderPageToCanvas(pg, c, 1000);
                     const text = await callAI(
@@ -34992,18 +35211,21 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                         ] }],
                         { feature: 'nbHandwritingIndex' }
                     );
+                    const latest = await getFileData('nbpage_' + pg.id);
+                    c = latest ? JSON.parse(latest) : null;
+                    if (!c || nbStrokeSig(c) !== sig) return;
                     c.recognized = { text, sig, at: new Date().toISOString() };
                     nbSnippetCache[pg.id] = undefined;
                     await saveFileData('nbpage_' + pg.id, JSON.stringify(c));
-                    if (i === nbState.pageIndex && nbState.content) nbState.content.recognized = c.recognized;
+                    if (nbCurrentNotebook()?.id === nb.id && i === nbState.pageIndex && nbState.content) nbState.content.recognized = c.recognized;
                     done++;
                     showToast(i18n('handwriting_progress', done));
                 } catch (e) {
                     console.error('[nb] 手写识别失败:', e);
                     showToast(i18n('recognition_interrupted', e.message));
-                    break;
+                    return;
                 }
-            }
+            }));
             showToast(i18n('index_complete', done));
         }
 

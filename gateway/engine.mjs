@@ -7,7 +7,6 @@ import { GatewayError, abortError } from './errors.mjs';
 import { prepareImageUploads } from './image-uploads.mjs';
 import { LECTURE_QUALITY_INSTRUCTIONS } from './lecture-instructions.mjs';
 import { preparePdfAttachment } from './pdf.mjs';
-import { BoundedQueue } from './queue.mjs';
 import {
   buildCodexInput,
   validateAskBody,
@@ -101,7 +100,9 @@ export class GatewayEngine {
     this.appServer = appServer;
     this.preparePdf = options.preparePdf || preparePdfAttachment;
     this.prepareImages = options.prepareImages || prepareImageUploads;
-    this.queue = new BoundedQueue({ maxPending: config.maxQueueDepth });
+    this.activeRequests = 0;
+    this.statusCheck = null;
+    this.loginAttempt = null;
   }
 
   async start() {
@@ -113,42 +114,93 @@ export class GatewayEngine {
   }
 
   async status() {
+    // Share only simultaneous probes; every later check verifies upstream again.
+    if (this.statusCheck) return this.statusCheck;
+    this.statusCheck = this.#status().finally(() => { this.statusCheck = null; });
+    return this.statusCheck;
+  }
+
+  async #status() {
     let account = null;
     let statusError;
     if (this.appServer.running && this.appServer.initialized) {
       try {
-        account = await this.appServer.readAccount();
+        account = await this.appServer.readAccount({ refreshToken: true, timeoutMs: 12_000 });
+        requireChatgptAccount(account);
+        // This authenticated upstream request also detects a revoked access token.
+        await this.appServer.request('account/rateLimits/read', {}, { timeoutMs: 12_000 });
       } catch (error) {
         statusError = error;
       }
     }
     const auth = publicAuth(account);
+    const ready = Boolean(this.appServer.running && this.appServer.initialized && auth.type === 'chatgpt' && !statusError);
+    const loginRequired = statusError?.code === 'chatgpt_login_required' || account?.type === 'apiKey';
     return {
-      ready: Boolean(this.appServer.running && this.appServer.initialized && auth.type === 'chatgpt'),
+      ready,
+      checkedAt: new Date().toISOString(),
+      recovery: ready ? null : loginRequired ? 'login' : 'gateway',
       auth,
       appServer: {
         running: this.appServer.running,
         initialized: this.appServer.initialized,
       },
-      queue: this.queue.stats,
+      requests: { active: this.activeRequests, pending: 0 },
       ...(account?.type === 'apiKey' ? { authError: 'api_key_auth_refused' } : {}),
       ...(statusError ? { statusError: statusError.code || 'codex_unavailable' } : {}),
     };
   }
 
+  async startLogin() {
+    if (!this.appServer.running || !this.appServer.initialized) await this.appServer.start();
+    if (this.loginAttempt) return this.loginAttempt;
+    let loginId;
+    const clear = () => {
+      clearTimeout(timer);
+      this.loginAttempt = null;
+      this.appServer.removeListener('notification', onNotification);
+      this.appServer.removeListener('closed', clear);
+    };
+    const onNotification = notification => {
+      if (notification.method === 'account/login/completed' && notification.params?.loginId === loginId) clear();
+    };
+    const timer = setTimeout(clear, 10 * 60_000);
+    timer.unref?.();
+    this.appServer.on('notification', onNotification);
+    this.appServer.once('closed', clear);
+    this.loginAttempt = this.appServer.request('account/login/start', { type: 'chatgptDeviceCode' })
+      .then(result => {
+        if (!result?.verificationUrl || !result?.userCode) {
+          throw new GatewayError('codex_login_unavailable', 'Run npm run login in the gateway directory, then check the connection again.', 503);
+        }
+        loginId = result.loginId;
+        return { verificationUrl: result.verificationUrl, userCode: result.userCode };
+      });
+    try {
+      return await this.loginAttempt;
+    } catch (error) {
+      clear();
+      throw error;
+    }
+  }
+
   async models({ signal } = {}) {
-    const account = await this.appServer.readAccount({ signal });
+    const account = await this.appServer.readAccount({ signal, refreshToken: true });
     requireChatgptAccount(account);
     const catalog = await this.appServer.listModels({ signal });
     return { data: catalog.filter((model) => !model.hidden).map(publicModel) };
   }
 
-  ask(body, { signal, onProgress, onStart } = {}) {
+  async ask(body, { signal, onProgress, onStart, lecture = false } = {}) {
     const request = validateAskBody(body);
-    return this.queue.run(() => {
+    if (signal?.aborted) throw abortError(signal);
+    this.activeRequests += 1;
+    try {
       onStart?.();
-      return this.#execute(request, signal, onProgress);
-    }, { signal });
+      return await this.#execute(request, signal, onProgress, lecture);
+    } finally {
+      this.activeRequests -= 1;
+    }
   }
 
   async #chooseModel(request, signal) {
@@ -180,10 +232,9 @@ export class GatewayEngine {
     return chosen;
   }
 
-  async #execute(request, signal, onProgress) {
+  async #execute(request, signal, onProgress, lecture) {
     if (signal?.aborted) throw abortError(signal);
-    // Only lecture jobs opt in. Keep previews bounded and separate from the
-    // authoritative final answer; never forward raw reasoning content.
+    // Forward readable summaries and answer text; raw reasoning stays private.
     let progress = { stage: 'preparing', partialText: '', reasoningSummary: '' };
     const report = (update) => {
       if (!onProgress) return;
@@ -205,7 +256,7 @@ export class GatewayEngine {
     let retries = 0;
     const stageFor = (stage) => (retainedText ? 'retrying' : stage);
     const reportText = (text) => {
-      liveText = text.slice(0, 120_000);
+      liveText = text;
       if (retainedText && liveText.length < retainedText.length) {
         report({ stage: 'retrying', partialText: retainedText });
         return;
@@ -336,8 +387,9 @@ export class GatewayEngine {
         resolveCompletion(params.turn);
       }
     };
-    const onBlockedTool = ({ method }) => {
+    const onBlockedTool = ({ method, params }) => {
       if (!threadId) return;
+      if (params?.threadId && params.threadId !== threadId) return;
       interrupt();
       rejectCompletion(
         new GatewayError('tool_use_blocked', `Codex requested disabled client method: ${method}.`, 502),
@@ -375,7 +427,7 @@ export class GatewayEngine {
           serviceName: 'math-reader-codex',
           // Replace Codex's coding-agent defaults with the application's exact prompt.
           baseInstructions: request.systemPrompt,
-          ...(onProgress ? { developerInstructions: LECTURE_QUALITY_INSTRUCTIONS } : {}),
+          ...(lecture ? { developerInstructions: LECTURE_QUALITY_INSTRUCTIONS } : {}),
           config: { web_search: 'disabled', features },
         },
         {

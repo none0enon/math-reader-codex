@@ -55,6 +55,8 @@ function negativeToolResponse(method) {
 export class CodexAppServer extends EventEmitter {
   constructor(config, options = {}) {
     super();
+    // Concurrent turns install listeners which are removed on completion.
+    this.setMaxListeners(0);
     this.config = config;
     this.spawn = options.spawn || spawn;
     this.arguments = options.arguments || appServerArguments();
@@ -306,7 +308,8 @@ export class CodexAppServer extends EventEmitter {
       if (message.error) {
         pending.reject(
           new GatewayError(
-            'codex_rpc_error',
+            /(?:\b401\b|unauthorized|refresh[_ -]?token|token.{0,30}(?:expired|revoked)|sign[ -]?in|log[ -]?in required)/i.test(message.error.message || '')
+              ? 'chatgpt_login_required' : 'codex_rpc_error',
             message.error.message || 'Codex app-server rejected the request.',
             502,
           ),

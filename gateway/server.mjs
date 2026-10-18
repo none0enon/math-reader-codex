@@ -13,6 +13,7 @@ import {
 import { GatewayEngine } from './engine.mjs';
 import { LectureJobs } from './jobs.mjs';
 import { GatewayError, abortError, asGatewayError } from './errors.mjs';
+import { streamEvents, watchJob } from './stream.mjs';
 
 function sendJson(response, statusCode, body, extraHeaders = {}) {
   if (response.destroyed || response.writableEnded) return;
@@ -159,7 +160,7 @@ function requestSignal(request, response, timeoutMs) {
 }
 
 export function createGatewayHandler({ config, engine, token }) {
-  const lectureJobs = new LectureJobs(engine, config.maxQueueDepth, {
+  const lectureJobs = new LectureJobs(engine, {
     timeoutMs: config.lectureTimeoutMs,
   });
   return async function gatewayHandler(request, response) {
@@ -167,9 +168,9 @@ export function createGatewayHandler({ config, engine, token }) {
     try {
       applyCors(request, response, config);
       const url = new URL(request.url || '/', 'http://gateway.invalid');
-      const jobMatch = /^\/v1\/lecture-jobs\/([a-f0-9-]{36})$/i.exec(url.pathname);
+      const jobMatch = /^\/v1\/lecture-jobs\/([a-f0-9-]{36})(\/events)?$/i.exec(url.pathname);
       if (request.method === 'OPTIONS') {
-        if (!['/v1/ask', '/v1/models', '/v1/status', '/v1/lecture-jobs'].includes(url.pathname) && !jobMatch) {
+        if (!['/v1/ask', '/v1/models', '/v1/status', '/v1/login', '/v1/lecture-jobs'].includes(url.pathname) && !jobMatch) {
           throw new GatewayError('not_found', 'Endpoint not found.', 404);
         }
         // Compatibility with browsers using PNA preflights. Modern browsers
@@ -194,14 +195,26 @@ export function createGatewayHandler({ config, engine, token }) {
       }
       if (url.search) throw new GatewayError('invalid_request', 'Query parameters are not supported.', 400);
 
-      cancellation = requestSignal(request, response, config.requestTimeoutMs);
+      cancellation = requestSignal(request, response, jobMatch?.[2]
+        ? Math.max(config.requestTimeoutMs, config.lectureTimeoutMs + 30_000)
+        : config.requestTimeoutMs);
+      if (request.method === 'POST' && url.pathname === '/v1/login') {
+        await readJsonBody(request, 1024, cancellation.signal);
+        sendJson(response, 200, await engine.startLogin());
+        return;
+      }
       if (request.method === 'POST' && url.pathname === '/v1/lecture-jobs') {
         const body = await readJsonBody(request, config.maxBodyBytes, cancellation.signal);
         sendJson(response, 202, lectureJobs.create(body));
         return;
       }
       if (request.method === 'GET' && jobMatch) {
-        sendJson(response, 200, lectureJobs.read(jobMatch[1]));
+        // Check existence before sending event-stream headers.
+        const job = lectureJobs.read(jobMatch[1]);
+        if (jobMatch[2]) {
+          await streamEvents(response, cancellation.signal, onProgress =>
+            watchJob(lectureJobs, jobMatch[1], cancellation.signal, onProgress));
+        } else sendJson(response, 200, job);
         return;
       }
       if (request.method === 'GET' && url.pathname === '/v1/status') {
@@ -214,8 +227,13 @@ export function createGatewayHandler({ config, engine, token }) {
       }
       if (request.method === 'POST' && url.pathname === '/v1/ask') {
         const body = await readJsonBody(request, config.maxBodyBytes, cancellation.signal);
-        const result = await engine.ask(body, { signal: cancellation.signal });
-        sendJson(response, 200, result);
+        if (String(request.headers.accept || '').includes('text/event-stream')) {
+          await streamEvents(response, cancellation.signal, onProgress =>
+            engine.ask(body, { signal: cancellation.signal, onProgress }));
+        } else {
+          const result = await engine.ask(body, { signal: cancellation.signal });
+          sendJson(response, 200, result);
+        }
         return;
       }
       throw new GatewayError('not_found', 'Endpoint not found.', 404);
