@@ -248,9 +248,6 @@
                     buffer = buffer.slice(match.index + match[0].length);
                     if (line(value)) return;
                 }
-                if (buffer.length > 4 * 1024 * 1024) {
-                    throw gatewayError('codex_gateway_response_invalid', 'A streaming event is too large.');
-                }
                 if (chunk.done) return;
             }
         } finally {

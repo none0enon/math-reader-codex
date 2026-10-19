@@ -1,3 +1,5 @@
+import { once } from 'node:events';
+
 import { abortError, asGatewayError } from './errors.mjs';
 
 // Progress snapshots may replace each other while a browser is slow. A final
@@ -13,30 +15,28 @@ export async function streamEvents(response, signal, run) {
   let latest;
   const send = (event, data) => {
     if (response.destroyed || response.writableEnded) return;
-    // Disconnect a stalled consumer; resumable jobs continue independently.
-    if (response.writableLength > 2 * 1024 * 1024) {
-      response.destroy();
-      return;
-    }
     response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
   const flush = () => {
-    if (!latest) return;
+    if (!latest || response.writableNeedDrain) return;
     send('progress', latest);
     latest = undefined;
   };
   const updates = setInterval(flush, 100);
   const heartbeat = setInterval(() => {
-    if (!response.destroyed && !response.writableEnded) response.write(': keepalive\n\n');
+    if (!response.destroyed && !response.writableEnded && !response.writableNeedDrain) response.write(': keepalive\n\n');
   }, 15_000);
   updates.unref?.();
   heartbeat.unref?.();
   try {
     const result = await run(progress => { latest = progress; });
+    if (response.writableNeedDrain) await once(response, 'drain', { signal });
     flush();
+    if (response.writableNeedDrain) await once(response, 'drain', { signal });
     send('result', result);
   } catch (error) {
-    const failure = asGatewayError(error);
+    const failure = signal.aborted ? abortError(signal) : asGatewayError(error);
+    if (latest) send('progress', latest);
     send('error', { code: failure.code, message: failure.message, status: failure.statusCode });
   } finally {
     clearInterval(updates);

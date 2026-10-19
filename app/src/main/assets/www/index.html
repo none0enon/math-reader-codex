@@ -6077,6 +6077,34 @@
         </div>
     </div>
 
+    <!-- Every Codex request can display its public output while it streams. -->
+    <div class="modal-overlay" id="codexOutputModal" role="dialog" aria-modal="true"
+        aria-labelledby="codexOutputTitle" onclick="closeCodexOutput()" style="z-index:11000;">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <span class="modal-title" id="codexOutputTitle" data-i18n="codex_output_title">Codex 返回内容</span>
+                <button type="button" class="modal-close" onclick="closeCodexOutput()" data-i18n-title="close">&times;</button>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="codexOutputRequest" data-i18n="codex_output_request">生成任务</label>
+                <select class="form-select" id="codexOutputRequest" onchange="selectCodexOutput(this.value)"></select>
+            </div>
+            <div class="setting-item-desc" id="codexOutputStatus" role="status" aria-live="polite"></div>
+            <details id="codexOutputCommentary" hidden>
+                <summary data-i18n="codex_output_commentary">进度消息</summary>
+                <div class="lecture-body" id="codexOutputCommentaryText"></div>
+            </details>
+            <details id="codexOutputReasoning" hidden>
+                <summary data-i18n="codex_output_reasoning">推理摘要</summary>
+                <div class="lecture-body" id="codexOutputReasoningText"></div>
+            </details>
+            <div class="lecture-body" id="codexOutputText"></div>
+            <div class="codex-gateway-status" id="codexOutputError" role="status"></div>
+            <button type="button" class="fetch-models-btn" onclick="clearFinishedCodexOutput()"
+                data-i18n="codex_output_clear">清除已结束任务的预览</button>
+        </div>
+    </div>
+
     <!-- ==================== API Setting Modal (照抄index.html样式) ==================== -->
     <div class="modal-overlay" id="apiModal" onclick="hideModal('apiModal')">
         <div class="modal-content" onclick="event.stopPropagation()">
@@ -6131,6 +6159,8 @@
                     onclick="testCodexGatewayConnection()" data-i18n="codex_test_connection">测试 Codex Gateway</button>
                 <button type="button" class="fetch-models-btn" id="codexLoginButton" hidden
                     onclick="loginCodexGateway()" data-i18n="codex_login">重新登录 ChatGPT</button>
+                <button type="button" class="fetch-models-btn" onclick="showCodexOutput()"
+                    data-i18n="codex_output_title">Codex 返回内容</button>
             </div>
             <div class="codex-gateway-hint" data-i18n="codex_gateway_scope_note">关闭时沿用下方主/备用 API；开启时下方 Gemini 配置仅用于音频。</div>
 
@@ -7262,6 +7292,11 @@
             }
         };
         Object.assign(I18N.zh, {
+            codex_output_title:'Codex 返回内容', codex_output_request:'生成任务',
+            codex_output_commentary:'进度消息', codex_output_reasoning:'推理摘要',
+            codex_output_clear:'清除已结束任务的预览', codex_output_empty:'暂无 Codex 生成任务',
+            codex_output_running:'生成中', codex_output_completed:'返回完成', codex_output_failed:'生成失败',
+            codex_output_preparing:'正在准备请求…',
             codex_login:'重新登录 ChatGPT', codex_login_page:'打开 ChatGPT 授权页',
             codex_login_guide:'ChatGPT 授权已失效或尚未登录。点击「重新登录 ChatGPT」，在授权页输入设备代码；完成后点击「测试 Codex Gateway」。也可在网关电脑的 gateway 目录运行 npm run login。',
             codex_reconnect_guide:'请在网关电脑的 gateway 目录运行 npm start；确认 VPN/Tailscale 已连接、HTTPS 网关转发正常，核对本页 Gateway URL 和访问令牌，然后重新测试连接。',
@@ -7286,6 +7321,11 @@
             indexeddb_unavailable:'IndexedDB 不可用', transaction_aborted:'事务被中止：{0}', unknown_reason:'未知原因', recording_transaction_failed:'录音事务失败', recording_transaction_aborted:'录音事务被中止', class_file_transaction_failed:'课堂文件事务失败', class_file_transaction_aborted:'课堂文件事务被中止', recording_storage_module_not_loaded:'录音存储模块未加载', class_lecture_content_empty:'课堂讲义内容为空', data_structure_corrupt:'数据结构损坏：books/papers 不是数组'
         });
         Object.assign(I18N.en, {
+            codex_output_title:'Codex output', codex_output_request:'Generation request',
+            codex_output_commentary:'Progress messages', codex_output_reasoning:'Reasoning summary',
+            codex_output_clear:'Clear previews for finished requests', codex_output_empty:'No Codex generation requests yet',
+            codex_output_running:'Generating', codex_output_completed:'Response complete', codex_output_failed:'Generation failed',
+            codex_output_preparing:'Preparing the request…',
             codex_login:'Sign in to ChatGPT again', codex_login_page:'Open ChatGPT authorization',
             codex_login_guide:'ChatGPT authorization has expired or is missing. Click Sign in to ChatGPT again, enter the device code on the authorization page, then test the connection. You can also run npm run login in the gateway directory on the gateway computer.',
             codex_reconnect_guide:'Run npm start in the gateway directory on the gateway computer. Check VPN/Tailscale, HTTPS forwarding, Gateway URL and token, then test the connection again.',
@@ -7310,6 +7350,11 @@
             indexeddb_unavailable:'IndexedDB is unavailable', transaction_aborted:'Transaction aborted: {0}', unknown_reason:'Unknown reason', recording_transaction_failed:'Recording transaction failed', recording_transaction_aborted:'Recording transaction was aborted', class_file_transaction_failed:'Class file transaction failed', class_file_transaction_aborted:'Class file transaction was aborted', recording_storage_module_not_loaded:'Recording storage module is not loaded', class_lecture_content_empty:'Class lecture content is empty', data_structure_corrupt:'Corrupted data structure: books/papers must be arrays'
         });
         Object.assign(I18N.fr, {
+            codex_output_title:'Contenu renvoyé par Codex', codex_output_request:'Requête de génération',
+            codex_output_commentary:'Messages de progression', codex_output_reasoning:'Résumé du raisonnement',
+            codex_output_clear:'Effacer les aperçus des requêtes terminées', codex_output_empty:'Aucune requête Codex pour le moment',
+            codex_output_running:'Génération en cours', codex_output_completed:'Réponse terminée', codex_output_failed:'Échec de la génération',
+            codex_output_preparing:'Préparation de la requête…',
             codex_login:'Se reconnecter à ChatGPT', codex_login_page:'Ouvrir l’autorisation ChatGPT',
             codex_login_guide:'L’autorisation ChatGPT a expiré ou manque. Reconnectez-vous, saisissez le code sur la page d’autorisation, puis vérifiez la connexion. Vous pouvez aussi exécuter npm run login dans le dossier gateway sur l’ordinateur de la passerelle.',
             codex_reconnect_guide:'Exécutez npm start dans le dossier gateway sur l’ordinateur de la passerelle. Vérifiez VPN/Tailscale, le transfert HTTPS, l’URL et le jeton, puis vérifiez la connexion.',
@@ -12228,7 +12273,7 @@
                         ]
                     }];
                     
-                    const ocrText = await callAI(i18n('prompt_ocr'), messages, { feature: 'ocr' }) || '';
+                    const ocrText = await callAI(i18n('prompt_ocr'), messages, { feature: 'ocr', streamLabel: i18n('page_number_label', pageNum) }) || '';
                     
                     sourceCache[pageNum] = {
                         text: ocrText,
@@ -12891,6 +12936,7 @@
             const code = error?.code || '';
             if (code === 'chatgpt_login_required' || code === 'unauthorized' ||
                 /^(?:codex_gateway_(?:network_error|timeout|stream_disconnected|response_invalid|upgrade_required|url_required|token_required)|codex_unavailable|codex_timeout)$/.test(code)) {
+                closeCodexOutput();
                 codexConnectionCheck++;
                 const identity = code + ':' + (appData.settings.codexGatewayUrl || '');
                 showCodexRecovery(error, null, codexRecoveryShown !== identity);
@@ -19622,6 +19668,7 @@
 
             try {
                 const result = await callReaderAI(systemPrompt, apiMessages, { pdfAttachment, feature: chatFeature,
+                    streamInPlace: true, streamLabel: currentDoc.title || '',
                     onProgress: streamChatPreview(loadingDiv, container, () => readerChatDoc?.id === currentDoc.id, true) });
                 readerChatStreams.delete(loadingDiv);
                 loadingDiv.remove();
@@ -19779,6 +19826,7 @@
 
             try {
                 const result = await callReaderAI(systemPrompt, apiMessages, { pdfAttachment, feature: chatFeature,
+                    streamInPlace: true, streamLabel: currentDoc.title || '',
                     onProgress: streamChatPreview(loadingDiv, container, () => readerChatDoc?.id === currentDoc.id, true) });
                 readerChatStreams.delete(loadingDiv);
                 loadingDiv.remove();
@@ -20182,8 +20230,153 @@
             return results.map(result => result.value);
         }
 
+        // Transient output is attached at the common Codex entry point. Every
+        // request has its own buffer, including structured output and retries.
+        // These buffers never enter appData, IndexedDB, backups or cloud sync.
+        const codexOutputRequests = new Map();
+        let codexOutputSequence = 0;
+        let codexOutputSelected = '';
+        let codexOutputTimer = null;
+        let codexOutputDismissed = false;
+
+        function codexOutputRequestLabel(request) {
+            const feature = aiFeatureLabel(request.feature) || i18n('codex_output_title');
+            return '#' + request.number + ' · ' + feature +
+                (request.label ? ' · ' + request.label : '') +
+                ' · ' + i18n('codex_output_' + request.status);
+        }
+
+        function renderCodexOutput() {
+            const request = codexOutputRequests.get(codexOutputSelected);
+            const status = document.getElementById('codexOutputStatus');
+            const body = document.getElementById('codexOutputText');
+            const error = document.getElementById('codexOutputError');
+            document.getElementById('codexOutputCommentary').hidden = !request?.commentaryText;
+            document.getElementById('codexOutputReasoning').hidden = !request?.reasoningSummary;
+            if (!request) {
+                status.textContent = i18n('codex_output_empty');
+                body.textContent = '';
+                body._codexText = undefined;
+                error.classList.remove('show');
+                return;
+            }
+            status.textContent = codexOutputRequestLabel(request);
+            // Text nodes preserve incomplete JSON/XML, Markdown and LaTeX as
+            // returned, and cannot turn partially streamed markup into HTML.
+            for (const [id, text] of [
+                ['codexOutputText', request.partialText || (request.status === 'running' ? i18n('codex_output_preparing') : '')],
+                ['codexOutputCommentaryText', request.commentaryText || ''],
+                ['codexOutputReasoningText', request.reasoningSummary || '']
+            ]) {
+                const target = document.getElementById(id);
+                if (target._codexText !== text) {
+                    target._codexText = text;
+                    target.textContent = text;
+                    target.style.whiteSpace = 'pre-wrap';
+                }
+            }
+            error.textContent = request.error || '';
+            error.className = 'codex-gateway-status' + (request.error ? ' show error' : '');
+        }
+
+        function scheduleCodexOutputRender() {
+            if (codexOutputTimer !== null) return;
+            codexOutputTimer = setTimeout(() => {
+                codexOutputTimer = null;
+                if (document.getElementById('codexOutputModal').classList.contains('show')) renderCodexOutput();
+            }, 100);
+        }
+
+        function selectCodexOutput(id) {
+            if (!codexOutputRequests.has(id)) return;
+            codexOutputSelected = id;
+            document.getElementById('codexOutputRequest').value = id;
+            renderCodexOutput();
+        }
+
+        function showCodexOutput(id) {
+            if (id) selectCodexOutput(id);
+            else if (!codexOutputRequests.has(codexOutputSelected)) {
+                const latest = [...codexOutputRequests.keys()].at(-1);
+                if (latest) selectCodexOutput(latest);
+            }
+            codexOutputDismissed = false;
+            renderCodexOutput();
+            showModal('codexOutputModal');
+        }
+
+        function closeCodexOutput() {
+            codexOutputDismissed = true;
+            hideModal('codexOutputModal');
+        }
+
+        function clearFinishedCodexOutput() {
+            for (const [id, request] of codexOutputRequests) {
+                if (request.status === 'running') continue;
+                request.option.remove();
+                codexOutputRequests.delete(id);
+            }
+            if (!codexOutputRequests.has(codexOutputSelected)) {
+                codexOutputSelected = [...codexOutputRequests.keys()].at(-1) || '';
+            }
+            document.getElementById('codexOutputRequest').value = codexOutputSelected;
+            renderCodexOutput();
+        }
+
+        function beginCodexOutputRequest(options) {
+            const hadActive = [...codexOutputRequests.values()].some(request => request.status === 'running');
+            if (!hadActive) codexOutputDismissed = false;
+            const id = crypto.randomUUID();
+            const request = {
+                number: ++codexOutputSequence, feature: options.feature || '',
+                label: String(options.streamLabel || ''), status: 'running',
+                partialText: '', commentaryText: '', reasoningSummary: '', error: '',
+                option: document.createElement('option')
+            };
+            request.option.value = id;
+            request.option.textContent = codexOutputRequestLabel(request);
+            codexOutputRequests.set(id, request);
+            document.getElementById('codexOutputRequest').appendChild(request.option);
+            if (!codexOutputSelected) codexOutputSelected = id;
+            const hasNativePreview = options.streamInPlace === true;
+            if (!hasNativePreview && !codexOutputDismissed &&
+                !document.getElementById('codexOutputModal').classList.contains('show')) showCodexOutput(id);
+            const refresh = () => {
+                request.option.textContent = codexOutputRequestLabel(request);
+                if (codexOutputSelected === id) scheduleCodexOutputRender();
+            };
+            return {
+                update(progress) {
+                    for (const key of ['partialText', 'commentaryText', 'reasoningSummary']) {
+                        if (typeof progress[key] === 'string') request[key] = progress[key];
+                    }
+                    refresh();
+                },
+                complete(text) {
+                    request.partialText = text;
+                    request.status = 'completed';
+                    refresh();
+                },
+                fail(error) {
+                    request.error = error?.message || String(error);
+                    request.status = 'failed';
+                    refresh();
+                }
+            };
+        }
+
         async function doCodexGatewayRequest(systemPrompt, messages, options = {}) {
             const settings = appData.settings || {};
+            const output = beginCodexOutputRequest(options);
+            const onProgress = progress => {
+                output.update(progress);
+                if (options.lectureJob) {
+                    codexGatewayModule().reportProgress(options.lectureJob.onProgress, progress);
+                    if (progress.stage === 'reconnecting') handleCodexRequestError({
+                        code: 'codex_gateway_network_error', message: ''
+                    });
+                } else codexGatewayModule().reportProgress(options.onProgress, progress);
+            };
             try {
                 const result = await codexGatewayModule().ask(
                     codexGatewaySettingsConfig(settings),
@@ -20195,17 +20388,14 @@
                         pdfAttachment: options.pdfAttachment
                     },
                     { timeoutMs: codexGatewayModule().MAX_REQUEST_TIMEOUT_MS, signal: options.signal,
-                        onProgress: options.onProgress,
-                        lectureJob: options.lectureJob && { ...options.lectureJob, onProgress: progress => {
-                            options.lectureJob.onProgress?.(progress);
-                            if (progress.stage === 'reconnecting') handleCodexRequestError({
-                                code: 'codex_gateway_network_error', message: ''
-                            });
-                        } }
+                        onProgress,
+                        lectureJob: options.lectureJob && { ...options.lectureJob, onProgress }
                     }
                 );
+                output.complete(result.text);
                 return result.text;
             } catch (error) {
+                output.fail(error);
                 handleCodexRequestError(error);
                 throw error;
             }
@@ -20942,6 +21132,7 @@
                     {
                         maxTokens: 8192,
                         pdfAttachment: { ...slice, name: `${bookTitle}-${startPage}-${endPage}.pdf` },
+                        streamLabel: bookTitle + ' · ' + startPage + '–' + endPage,
                         feature: 'outline'
                     }
                 );
@@ -21036,6 +21227,7 @@ ${i18n('prompt_outline_gen')}`;
                     wholeResult = await callAI(i18n('prompt_outline_sys'), [{ role: 'user', content: userText }], {
                         maxTokens: 8192,
                         pdfAttachment: { bytes, name: bookTitle + '.pdf' },
+                        streamLabel: bookTitle,
                         feature: 'outline'
                     });
                     wholeRequestSucceeded = true;
@@ -21312,6 +21504,8 @@ ${i18n('prompt_lecture_gen')}`;
                     pdfAttachment,
                     lectureJob,
                     onProgress,
+                    streamInPlace: true,
+                    streamLabel: book.title + ' · ' + chapter.title,
                     feature: 'lecture'
                 });
 
@@ -23357,7 +23551,7 @@ ${i18n('prompt_lecture_gen')}`;
 ${paper.authors ? i18n('prompt_abstract_author') + paper.authors : ''}
 ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
 
-                const result = await callAI(systemPrompt, [{ role: 'user', content: userMessage }], { maxTokens: 8192, feature: 'abstract' });
+                const result = await callAI(systemPrompt, [{ role: 'user', content: userMessage }], { maxTokens: 8192, feature: 'abstract', streamLabel: paper.title || '' });
 
                 paper = appData.papers.find(p => p.id === paperId);
                 if (!paper) return;
@@ -23510,6 +23704,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 }
 
                 const result = await callAI(systemPrompt, recentMessages, { maxTokens: 8192, feature: chatFeature,
+                    streamInPlace: true,
                     onProgress: streamChatPreview(typing, container, () => true, renderResponseMath) });
 
                 const answer = addChatMessage(container, false, result || i18n('chat_no_answer'), renderResponseMath);
@@ -26144,7 +26339,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
 
             try {
                 let msgContent = [{ role: 'user', content: userMsg }];
-                const aiOptions = { feature: material.type === 'image' ? 'classroomPhoto' : 'classroomFile' };
+                const aiOptions = { feature: material.type === 'image' ? 'classroomPhoto' : 'classroomFile', streamLabel: material.name || material.ref };
 
                 // For images, include the image
                 if (material.type === 'image' && material.data) {
@@ -28139,7 +28334,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 try {
                     const msgContent = [{ role: 'user', content: exGradingContent(gradingPages, latex) }];
 
-                    const result = await callAI(systemPrompt, msgContent, { maxTokens: 8192, temperature: 0.3, feature: 'gradeAll' });
+                    const result = await callAI(systemPrompt, msgContent, { maxTokens: 8192, temperature: 0.3, feature: 'gradeAll', streamLabel: task.name + ' · ' + i18n('question_num', capturedIndex + 1) });
                     if (!gradingGuard()) return;
                     if (!result) { failed++; return; }
 
@@ -29012,10 +29207,10 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     return;
                 }
 
-                let result = await callAI(systemPrompt, msgContent, { maxTokens: 16384, temperature: 0.3, feature: 'exerciseBatch' });
+                let result = await callAI(systemPrompt, msgContent, { maxTokens: 16384, temperature: 0.3, feature: 'exerciseBatch', streamLabel: exFindTask(folderId, taskId)?.name || '' });
                 if (!result) { showToast(i18n('toast_ai_return_parse_fail')); return; }
 
-                result = await autoFixTruncatedArray(result, systemPrompt, msgContent, 'exerciseBatch');
+                result = await autoFixTruncatedArray(result, systemPrompt, msgContent, 'exerciseBatch', exFindTask(folderId, taskId)?.name || '');
 
                 let questions;
                 try {
@@ -29407,11 +29602,11 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 }
 
                 // 第一次请求，maxTokens 给足
-                let result = await callAI(systemPrompt, msgContent, { maxTokens: 16384, temperature: 0.3, feature: aiFeature });
+                let result = await callAI(systemPrompt, msgContent, { maxTokens: 16384, temperature: 0.3, feature: aiFeature, streamLabel: exFindTask(folderId, taskId)?.name || '' });
                 if (!result) { showToast(i18n('toast_ai_return_parse_fail')); return; }
 
                 // 检测是否被截断（JSON数组没有以 ] 结尾）
-                result = await autoFixTruncatedArray(result, systemPrompt, msgContent, aiFeature);
+                result = await autoFixTruncatedArray(result, systemPrompt, msgContent, aiFeature, exFindTask(folderId, taskId)?.name || '');
 
                 // Parse JSON — robust multi-strategy extraction
                 let questions;
@@ -29489,7 +29684,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
         }
 
         // 检测AI返回的JSON数组是否被截断，如果是则请求AI继续输出
-        async function autoFixTruncatedArray(result, systemPrompt, originalMsg, aiFeature) {
+        async function autoFixTruncatedArray(result, systemPrompt, originalMsg, aiFeature, streamLabel = '') {
             const trimmed = result.trim();
             // 检查是否有完整的 ] 结尾
             if (trimmed.endsWith(']')) return result;
@@ -29508,7 +29703,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                     { role: 'assistant', content: result },
                     { role: 'user', content: i18n('prompt_continue_truncated_json') }
                 ];
-                const continuation = await callAI(systemPrompt, continueMsg, { maxTokens: 16384, temperature: 0.3, feature: aiFeature });
+                const continuation = await callAI(systemPrompt, continueMsg, { maxTokens: 16384, temperature: 0.3, feature: aiFeature, streamLabel });
                 if (continuation) {
                     // 合并：去掉续写中可能重复的 [ 开头
                     let part2 = continuation.trim();
@@ -35209,7 +35404,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                             { type: 'image_url', image_url: { url: cv.toDataURL('image/jpeg', 0.8) } },
                             { type: 'text', text: i18n('prompt_handwriting_index_user') }
                         ] }],
-                        { feature: 'nbHandwritingIndex' }
+                        { feature: 'nbHandwritingIndex', streamLabel: i18n('page_number_label', i + 1) }
                     );
                     const latest = await getFileData('nbpage_' + pg.id);
                     c = latest ? JSON.parse(latest) : null;
@@ -35598,7 +35793,7 @@ ${paper.abstract ? i18n('prompt_abstract_original') + paper.abstract : ''}`;
                 if (img) content.push({ type: 'image_url', image_url: { url: img } });
                 else if (nbState.content && nbState.content.recognized) task += i18n('prompt_recognized_note', nbState.content.recognized.text);
                 content.push({ type: 'text', text: task });
-                const quizText = await callAI(sys, [{ role: 'user', content }], { feature: 'reviewQuiz' });
+                const quizText = await callAI(sys, [{ role: 'user', content }], { feature: 'reviewQuiz', streamLabel: nbReviewPageLabelPlain(r) });
                 const generatedAt = new Date().toISOString();
                 r.quizzes.push({
                     id: nbUid('quiz'),

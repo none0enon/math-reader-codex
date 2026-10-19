@@ -235,7 +235,7 @@ export class GatewayEngine {
   async #execute(request, signal, onProgress, lecture) {
     if (signal?.aborted) throw abortError(signal);
     // Forward readable summaries and answer text; raw reasoning stays private.
-    let progress = { stage: 'preparing', partialText: '', reasoningSummary: '' };
+    let progress = { stage: 'preparing', partialText: '', commentaryText: '', reasoningSummary: '' };
     const report = (update) => {
       if (!onProgress) return;
       progress = { ...progress, ...update };
@@ -243,9 +243,18 @@ export class GatewayEngine {
     };
     report({});
     let messageId;
-    let reasoningId;
-    let summaryIndex;
     const messagePhases = new Map();
+    const commentaryMessages = new Map();
+    const reasoningSummaries = new Map();
+    const summaryIndexes = new Map();
+    const reportCommentary = (id, text) => {
+      commentaryMessages.set(id, text);
+      report({ commentaryText: [...commentaryMessages.values()].join('\n\n') });
+    };
+    const reportSummary = (id, text) => {
+      reasoningSummaries.set(id, text);
+      report({ stage: stageFor('reasoning'), reasoningSummary: [...reasoningSummaries.values()].join('\n\n') });
+    };
     // When ChatGPT ends the response stream early (HTTP streams were observed
     // to end after about 15 minutes), Codex retries the sampling request:
     // completed reasoning is kept, but the unfinished answer is written again
@@ -350,7 +359,9 @@ export class GatewayEngine {
         }
         if (onProgress && item?.type === 'agentMessage') {
           messagePhases.set(item.id, item.phase);
-          if (item.phase !== 'commentary') {
+          if (item.phase === 'commentary') {
+            reportCommentary(item.id, String(item.text || commentaryMessages.get(item.id) || ''));
+          } else {
             enterMessage(item.id);
             if (notification.method === 'item/completed') {
               completedMessages.add(item.id);
@@ -361,27 +372,26 @@ export class GatewayEngine {
           }
         }
         if (onProgress && item?.type === 'reasoning') {
-          reasoningId = item.id;
-          summaryIndex = undefined;
-          report({
-            stage: stageFor('reasoning'),
-            reasoningSummary: (item.summary || []).filter(part => typeof part === 'string').join('\n\n').slice(-12_000),
-          });
+          const summary = (item.summary || []).filter(part => typeof part === 'string').join('\n\n');
+          if (summary || !reasoningSummaries.has(item.id)) reportSummary(item.id, summary);
         }
       }
       if (onProgress && notification.method === 'item/agentMessage/delta'
-          && typeof params.delta === 'string' && messagePhases.get(params.itemId) !== 'commentary') {
-        const previous = messageId === params.itemId ? liveText : '';
-        enterMessage(params.itemId);
-        reportText(previous + params.delta);
+          && typeof params.delta === 'string') {
+        if (messagePhases.get(params.itemId) === 'commentary') {
+          reportCommentary(params.itemId, (commentaryMessages.get(params.itemId) || '') + params.delta);
+        } else {
+          const previous = messageId === params.itemId ? liveText : '';
+          enterMessage(params.itemId);
+          reportText(previous + params.delta);
+        }
       }
       if (onProgress && notification.method === 'item/reasoning/summaryTextDelta'
           && typeof params.delta === 'string') {
-        const previous = reasoningId === params.itemId ? progress.reasoningSummary : '';
-        const separator = previous && summaryIndex !== params.summaryIndex ? '\n\n' : '';
-        reasoningId = params.itemId;
-        summaryIndex = params.summaryIndex;
-        report({ stage: stageFor('reasoning'), reasoningSummary: (previous + separator + params.delta).slice(-12_000) });
+        const previous = reasoningSummaries.get(params.itemId) || '';
+        const separator = previous && summaryIndexes.get(params.itemId) !== params.summaryIndex ? '\n\n' : '';
+        summaryIndexes.set(params.itemId, params.summaryIndex);
+        reportSummary(params.itemId, previous + separator + params.delta);
       }
       if (notification.method === 'turn/completed' && (!turnId || params?.turn?.id === turnId)) {
         resolveCompletion(params.turn);
