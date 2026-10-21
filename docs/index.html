@@ -21697,7 +21697,7 @@ ${i18n('prompt_lecture_gen')}`;
                 }
 
                 const result = await callAI(systemPrompt, [{ role: 'user', content: userMessage }], {
-                    maxTokens: 8192,
+                    maxTokens: 32800,
                     pdfAttachment,
                     lectureJob,
                     onProgress,
