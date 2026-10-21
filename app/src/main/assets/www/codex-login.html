@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <title>math-reader-codex</title>
+    <script src="codex-gateway.js" defer></script>
+    <script src="codex-login.js" defer></script>
+</head>
+<body>
+<main>
+    <h1>math-reader-codex</h1>
+    <h2>独立设备代码获取页</h2>
+    <p>填写应用中相同的 Gateway URL 和访问令牌，设备代码将在本页显示。访问令牌只发送给你填写的网关，本页不保存令牌。</p>
+    <form id="deviceLoginForm">
+        <p><label for="gatewayUrl">Gateway URL</label><br>
+            <input id="gatewayUrl" type="url" required autocomplete="off" autocapitalize="off" spellcheck="false" size="40"></p>
+        <p><label for="gatewayToken">网关访问令牌</label><br>
+            <input id="gatewayToken" type="password" required autocomplete="off" size="40"></p>
+        <p>
+            <button type="submit">仅获取设备代码</button>
+            <button type="button" id="switchAccount">退出当前账号并获取新代码</button>
+            <button type="button" id="checkConnection">测试连接并核对账号</button>
+        </p>
+    </form>
+    <p id="loginStatus" role="status" aria-live="polite"></p>
+    <p><label for="deviceCode">设备代码</label><br>
+        <input id="deviceCode" type="text" readonly autocomplete="off" spellcheck="false" placeholder="获取后显示在此处">
+        <button type="button" data-copy="deviceCode">复制设备代码</button></p>
+    <p><label for="authorizationUrl">备用授权地址</label><br>
+        <input id="authorizationUrl" type="text" readonly size="40" value="https://auth.openai.com/codex/device">
+        <button type="button" data-copy="authorizationUrl">复制备用授权地址</button></p>
+    <p><a href="https://auth.openai.com/codex/device" target="_blank" rel="noopener noreferrer">打开 ChatGPT 授权页</a></p>
+    <p>将备用授权地址复制到所选浏览器或无痕窗口，使用目标 Google 账号登录 ChatGPT，再输入设备代码。完成后返回测试连接并核对账号邮箱。</p>
+    <p>网关电脑也可在 gateway 目录运行 <code>npm run login</code> 获取设备代码。</p>
+    <p><a href="index.html">返回 math-reader-codex</a></p>
+</main>
+</body>
+</html>
