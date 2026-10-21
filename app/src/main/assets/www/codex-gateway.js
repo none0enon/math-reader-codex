@@ -397,24 +397,6 @@
         return { verificationUrl: DEVICE_LOGIN_URL, userCode: result.userCode.trim() };
     }
 
-    async function logout(config, options = {}) {
-        let result;
-        try {
-            result = await requestJson(config, '/v1/logout', {
-                ...options, method: 'POST', body: {}, timeoutMs: options.timeoutMs || 120_000
-            });
-        } catch (error) {
-            if (error.code === 'not_found' || [404, 405].includes(error.status)) {
-                throw gatewayError('codex_gateway_upgrade_required', 'Update and restart the gateway to switch accounts here.', error.status, error);
-            }
-            throw error;
-        }
-        if (result?.signedOut !== true) {
-            throw gatewayError('codex_gateway_response_invalid', 'The gateway did not confirm sign-out. Check the current account before authorizing again.');
-        }
-        return result;
-    }
-
     async function listModels(config, options) {
         const data = await requestJson(config, '/v1/models', options);
         if (!Array.isArray(data.data)) {
@@ -549,7 +531,6 @@
         getStatus,
         connectionState,
         startLogin,
-        logout,
         listModels,
         ask
     };
