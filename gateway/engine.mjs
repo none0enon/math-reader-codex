@@ -103,7 +103,6 @@ export class GatewayEngine {
     this.activeRequests = 0;
     this.statusCheck = null;
     this.loginAttempt = null;
-    this.logoutAttempt = null;
   }
 
   async start() {
@@ -115,14 +114,10 @@ export class GatewayEngine {
   }
 
   async status() {
-    if (this.logoutAttempt) await this.logoutAttempt;
     // Share only simultaneous probes; every later check verifies upstream again.
     if (this.statusCheck) return this.statusCheck;
-    const check = this.#status().finally(() => {
-      if (this.statusCheck === check) this.statusCheck = null;
-    });
-    this.statusCheck = check;
-    return check;
+    this.statusCheck = this.#status().finally(() => { this.statusCheck = null; });
+    return this.statusCheck;
   }
 
   async #status() {
@@ -159,36 +154,32 @@ export class GatewayEngine {
   }
 
   async startLogin() {
-    if (this.logoutAttempt) throw new GatewayError('codex_account_switching', 'The gateway is signing out. Get a new device code when sign-out finishes.', 409);
     if (!this.appServer.running || !this.appServer.initialized) await this.appServer.start();
-    if (this.logoutAttempt) throw new GatewayError('codex_account_switching', 'The gateway is signing out. Get a new device code when sign-out finishes.', 409);
-    if (this.loginAttempt) return this.loginAttempt.promise;
-    const attempt = { loginId: null, promise: null, clear: null };
+    if (this.loginAttempt) return this.loginAttempt;
+    let loginId;
     const clear = () => {
       clearTimeout(timer);
-      if (this.loginAttempt === attempt) this.loginAttempt = null;
+      this.loginAttempt = null;
       this.appServer.removeListener('notification', onNotification);
       this.appServer.removeListener('closed', clear);
     };
     const onNotification = notification => {
-      if (notification.method === 'account/login/completed' && notification.params?.loginId === attempt.loginId) clear();
+      if (notification.method === 'account/login/completed' && notification.params?.loginId === loginId) clear();
     };
     const timer = setTimeout(clear, 10 * 60_000);
     timer.unref?.();
     this.appServer.on('notification', onNotification);
     this.appServer.once('closed', clear);
-    attempt.clear = clear;
-    this.loginAttempt = attempt;
-    attempt.promise = this.appServer.request('account/login/start', { type: 'chatgptDeviceCode' })
+    this.loginAttempt = this.appServer.request('account/login/start', { type: 'chatgptDeviceCode' })
       .then(result => {
         if (!result?.verificationUrl || !result?.userCode) {
           throw new GatewayError('codex_login_unavailable', 'Run npm run login in the gateway directory, then check the connection again.', 503);
         }
-        attempt.loginId = result.loginId;
+        loginId = result.loginId;
         return { verificationUrl: result.verificationUrl, userCode: result.userCode };
       });
     try {
-      return await attempt.promise;
+      return await this.loginAttempt;
     } catch (error) {
       clear();
       if (error.code === 'codex_rpc_error' && /unknown variant|invalid params|method not found|chatgptDeviceCode/i.test(error.message || '')) {
@@ -196,36 +187,6 @@ export class GatewayEngine {
       }
       throw error;
     }
-  }
-
-  async logout() {
-    if (this.logoutAttempt) return this.logoutAttempt;
-    if (this.activeRequests) {
-      throw new GatewayError('codex_requests_active', 'Wait for active Codex requests to finish before switching accounts.', 409);
-    }
-    this.logoutAttempt = this.#logout();
-    try {
-      return await this.logoutAttempt;
-    } finally {
-      this.logoutAttempt = null;
-    }
-  }
-
-  async #logout() {
-    if (!this.appServer.running || !this.appServer.initialized) await this.appServer.start();
-    // Let an in-flight token refresh finish before clearing credentials.
-    if (this.statusCheck) await this.statusCheck;
-    const attempt = this.loginAttempt;
-    if (attempt) {
-      try { await attempt.promise; } catch (_) { /* A failed login has already cleared itself. */ }
-      if (attempt.loginId) {
-        await this.appServer.request('account/login/cancel', { loginId: attempt.loginId });
-      }
-      attempt.clear();
-    }
-    await this.appServer.request('account/logout', {});
-    this.statusCheck = null;
-    return { signedOut: true };
   }
 
   async models({ signal } = {}) {
@@ -237,7 +198,6 @@ export class GatewayEngine {
 
   async ask(body, { signal, onProgress, onStart, lecture = false } = {}) {
     const request = validateAskBody(body);
-    if (this.logoutAttempt) throw new GatewayError('codex_account_switching', 'The gateway is signing out. Complete the new authorization before generating content.', 409);
     if (signal?.aborted) throw abortError(signal);
     this.activeRequests += 1;
     try {

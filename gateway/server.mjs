@@ -170,7 +170,7 @@ export function createGatewayHandler({ config, engine, token }) {
       const url = new URL(request.url || '/', 'http://gateway.invalid');
       const jobMatch = /^\/v1\/lecture-jobs\/([a-f0-9-]{36})(\/events)?$/i.exec(url.pathname);
       if (request.method === 'OPTIONS') {
-        if (!['/v1/ask', '/v1/models', '/v1/status', '/v1/login', '/v1/logout', '/v1/lecture-jobs'].includes(url.pathname) && !jobMatch) {
+        if (!['/v1/ask', '/v1/models', '/v1/status', '/v1/login', '/v1/lecture-jobs'].includes(url.pathname) && !jobMatch) {
           throw new GatewayError('not_found', 'Endpoint not found.', 404);
         }
         // Compatibility with browsers using PNA preflights. Modern browsers
@@ -201,11 +201,6 @@ export function createGatewayHandler({ config, engine, token }) {
       if (request.method === 'POST' && url.pathname === '/v1/login') {
         await readJsonBody(request, 1024, cancellation.signal);
         sendJson(response, 200, await engine.startLogin());
-        return;
-      }
-      if (request.method === 'POST' && url.pathname === '/v1/logout') {
-        await readJsonBody(request, 1024, cancellation.signal);
-        sendJson(response, 200, await engine.logout());
         return;
       }
       if (request.method === 'POST' && url.pathname === '/v1/lecture-jobs') {

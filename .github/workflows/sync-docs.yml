@@ -26,8 +26,6 @@ jobs:
           cp app/src/main/assets/www/classroom-storage.js docs/
           cp app/src/main/assets/www/recording-ai.js docs/
           cp app/src/main/assets/www/codex-gateway.js docs/
-          cp app/src/main/assets/www/codex-login.html docs/
-          cp app/src/main/assets/www/codex-login.js docs/
           cp app/src/main/assets/www/storage-namespace.js docs/
           cp app/src/main/assets/www/pdf.min.js docs/
           cp app/src/main/assets/www/pdf.worker.min.js docs/
