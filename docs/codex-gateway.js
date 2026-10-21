@@ -417,12 +417,12 @@
             }
             throw error;
         }
-        if (!/^[A-Za-z0-9_-]{43}$/.test(result?.loginAccess || '') || !Number.isFinite(result?.expiresInMs) || result.expiresInMs <= 0) {
+        if (!/^[A-Za-z0-9_-]{43}$/.test(result?.loginAccess || '') || !Number.isFinite(result?.expiresAt) || result.expiresAt <= Date.now()) {
             throw gatewayError('codex_gateway_response_invalid', 'The gateway returned an invalid device-code link.');
         }
         const url = new URL('https://none0enon.github.io/math-reader-codex/codex-login.html');
         url.hash = new URLSearchParams({ gateway: normalizeBaseUrl(config.baseUrl), login: result.loginAccess }).toString();
-        return { url: url.href, expiresAt: Date.now() + Math.min(result.expiresInMs, 15 * 60_000) };
+        return { url: url.href, expiresAt: result.expiresAt };
     }
 
     async function logout(config, options = {}) {
