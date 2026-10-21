@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { readFile } from 'node:fs/promises';
@@ -35,6 +35,48 @@ function tokenMatches(header, expectedToken) {
   const received = Buffer.from(match[1], 'utf8');
   const expected = Buffer.from(expectedToken, 'utf8');
   return received.length === expected.length && timingSafeEqual(received, expected);
+}
+
+function isLoopbackHost(hostname) {
+  if (['localhost', '::1', '[::1]'].includes(hostname)) return true;
+  const parts = String(hostname || '').split('.');
+  return parts.length === 4 && parts[0] === '127' &&
+    parts.every(part => /^\d{1,3}$/.test(part) && Number(part) <= 255);
+}
+
+function isLocalLoginRequest(request) {
+  // Require both the direct socket and literal destination to be local.
+  // Reverse-proxy traffic uses a login link or the configured bearer token.
+  if (Object.keys(request.headers).some(name => name === 'forwarded' || name.startsWith('x-forwarded-'))) return false;
+  const peer = String(request.socket.remoteAddress || '').replace(/^::ffff:/i, '');
+  if (!isLoopbackHost(peer)) return false;
+  try {
+    return isLoopbackHost(new URL('http://' + request.headers.host).hostname);
+  } catch (_) { return false; }
+}
+
+function loginLinkStore() {
+  const links = new Map();
+  const digest = value => createHash('sha256').update(value).digest('hex');
+  const prune = () => {
+    for (const [key, expiresAt] of links) if (expiresAt <= Date.now()) links.delete(key);
+  };
+  return {
+    create() {
+      prune();
+      while (links.size >= 64) links.delete(links.keys().next().value);
+      const loginAccess = randomBytes(32).toString('base64url');
+      const expiresInMs = 15 * 60_000;
+      const expiresAt = Date.now() + expiresInMs;
+      links.set(digest(loginAccess), expiresAt);
+      return { loginAccess, expiresAt, expiresInMs };
+    },
+    accepts(header) {
+      prune();
+      const match = /^Login\s+([A-Za-z0-9_-]{43})$/i.exec(String(header || ''));
+      return !!match && links.has(digest(match[1]));
+    },
+  };
 }
 
 async function readJsonBody(request, maximumBytes, signal) {
@@ -160,6 +202,7 @@ function requestSignal(request, response, timeoutMs) {
 }
 
 export function createGatewayHandler({ config, engine, token }) {
+  const loginLinks = loginLinkStore();
   const lectureJobs = new LectureJobs(engine, {
     timeoutMs: config.lectureTimeoutMs,
   });
@@ -170,13 +213,13 @@ export function createGatewayHandler({ config, engine, token }) {
       const url = new URL(request.url || '/', 'http://gateway.invalid');
       const jobMatch = /^\/v1\/lecture-jobs\/([a-f0-9-]{36})(\/events)?$/i.exec(url.pathname);
       if (request.method === 'OPTIONS') {
-        if (!['/v1/ask', '/v1/models', '/v1/status', '/v1/login', '/v1/lecture-jobs'].includes(url.pathname) && !jobMatch) {
+        if (!['/v1/ask', '/v1/models', '/v1/status', '/v1/login', '/v1/login-links', '/v1/logout', '/v1/lecture-jobs'].includes(url.pathname) && !jobMatch) {
           throw new GatewayError('not_found', 'Endpoint not found.', 404);
         }
         // Compatibility with browsers using PNA preflights. Modern browsers
         // may additionally require the user's local-network permission.
-        // applyCors already validated the origin; actual requests still need
-        // the gateway bearer token. Never grant this to origin-less probes.
+        // applyCors already validated the origin; endpoint authorization below
+        // handles gateway access and the limited login flow separately.
         if (request.headers.origin && request.headers['access-control-request-private-network'] === 'true') {
           response.setHeader('Access-Control-Allow-Private-Network', 'true');
         }
@@ -184,12 +227,21 @@ export function createGatewayHandler({ config, engine, token }) {
         response.end();
         return;
       }
-      if (!tokenMatches(request.headers.authorization, token)) {
+      const loginOperation = (request.method === 'GET' && url.pathname === '/v1/status') ||
+        (request.method === 'POST' && ['/v1/login', '/v1/logout'].includes(url.pathname));
+      const createLoginLink = request.method === 'POST' && url.pathname === '/v1/login-links';
+      const gatewayAccess = tokenMatches(request.headers.authorization, token);
+      const localLogin = (loginOperation || createLoginLink) && isLocalLoginRequest(request);
+      const linkedLogin = loginOperation && loginLinks.accepts(request.headers.authorization);
+      if (!gatewayAccess && !localLogin && !linkedLogin) {
+        const loginOnly = loginOperation || createLoginLink;
         sendJson(
           response,
           401,
-          { error: { code: 'unauthorized', message: 'A valid gateway bearer token is required.' } },
-          { 'WWW-Authenticate': 'Bearer realm="math-reader-codex-gateway"' },
+          { error: loginOnly
+            ? { code: 'codex_login_link_required', message: 'Copy a fresh device-code link from the app, or obtain the code on the gateway computer.' }
+            : { code: 'unauthorized', message: 'A valid gateway bearer token is required.' } },
+          { 'WWW-Authenticate': (loginOnly ? 'Login' : 'Bearer') + ' realm="math-reader-codex-gateway"' },
         );
         return;
       }
@@ -198,9 +250,19 @@ export function createGatewayHandler({ config, engine, token }) {
       cancellation = requestSignal(request, response, jobMatch?.[2]
         ? Math.max(config.requestTimeoutMs, config.lectureTimeoutMs + 30_000)
         : config.requestTimeoutMs);
+      if (createLoginLink) {
+        await readJsonBody(request, 1024, cancellation.signal);
+        sendJson(response, 200, loginLinks.create());
+        return;
+      }
       if (request.method === 'POST' && url.pathname === '/v1/login') {
         await readJsonBody(request, 1024, cancellation.signal);
         sendJson(response, 200, await engine.startLogin());
+        return;
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/logout') {
+        await readJsonBody(request, 1024, cancellation.signal);
+        sendJson(response, 200, await engine.logout());
         return;
       }
       if (request.method === 'POST' && url.pathname === '/v1/lecture-jobs') {

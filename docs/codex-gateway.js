@@ -7,6 +7,7 @@
 
     const MAX_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
     const DEFAULT_REQUEST_TIMEOUT_MS = MAX_REQUEST_TIMEOUT_MS;
+    const DEVICE_LOGIN_URL = 'https://auth.openai.com/codex/device';
     // The gateway enforces the lecture deadline. Reconnected event streams
     // attach to the same background job until that deadline or completion.
     const LECTURE_JOB_MAX_WAIT_MS = 6 * 60 * 60 * 1000;
@@ -291,9 +292,17 @@
         try {
             if (requestOptions.resumable) touchStream();
             const headers = {
-                'Accept': requestOptions.stream ? 'text/event-stream' : 'application/json',
-                'Authorization': 'Bearer ' + normalizeToken(config && config.token)
+                'Accept': requestOptions.stream ? 'text/event-stream' : 'application/json'
             };
+            const loginPath = ['/v1/login', '/v1/logout', '/v1/status'].includes(path);
+            const localLoginPath = loginPath || path === '/v1/login-links';
+            const localLogin = localLoginPath && isLoopbackHostname(new URL(normalizeBaseUrl(config?.baseUrl)).hostname);
+            if (config?.loginOnly) {
+                if (!loginPath) throw gatewayError('codex_login_scope_invalid', 'This link only supports signing in and checking the account.');
+                if (config.loginAccess) headers.Authorization = 'Login ' + normalizeToken(config.loginAccess);
+            } else if (config?.token || !localLogin) {
+                headers.Authorization = 'Bearer ' + normalizeToken(config?.token);
+            }
             if (requestOptions.body !== undefined) headers['Content-Type'] = 'application/json';
             const response = await fetchImpl(endpointUrl(config, path), {
                 method: requestOptions.method || 'GET',
@@ -356,6 +365,80 @@
 
     async function getStatus(config, options) {
         return requestJson(config, '/v1/status', options);
+    }
+
+    function connectionState(status) {
+        if (!status || typeof status !== 'object' || typeof status.ready !== 'boolean') {
+            throw gatewayError('codex_gateway_response_invalid', 'The gateway returned an invalid connection status.');
+        }
+        // Older gateways report auth.type but omit recovery and checkedAt.
+        // An explicit unauthenticated account must still offer authorization.
+        const loginRequired = status.recovery === 'login' || status.statusError === 'chatgpt_login_required' ||
+            status.authError === 'api_key_auth_refused' || ['none', 'apiKey'].includes(status.auth?.type);
+        const ready = status.ready && status.auth?.type === 'chatgpt' && !!status.checkedAt &&
+            !status.statusError && !loginRequired;
+        return {
+            ready,
+            authType: loginRequired ? 'none' : status.auth?.type === 'chatgpt' ? 'chatgpt' : 'unknown',
+            recovery: ready ? null : loginRequired ? 'login' : 'gateway',
+            code: ready ? null : loginRequired ? 'chatgpt_login_required' :
+                status.statusError || (status.checkedAt ? 'codex_unavailable' : 'codex_gateway_upgrade_required')
+        };
+    }
+
+    async function startLogin(config, options = {}) {
+        let result;
+        try {
+            result = await requestJson(config, '/v1/login', {
+                ...options, method: 'POST', body: {}, timeoutMs: options.timeoutMs || 30_000
+            });
+        } catch (error) {
+            if (error.code === 'not_found' || [404, 405].includes(error.status)) {
+                throw gatewayError('codex_gateway_upgrade_required', 'Update and restart the gateway to obtain a device code here.', error.status, error);
+            }
+            throw error;
+        }
+        if (!result || result.verificationUrl !== DEVICE_LOGIN_URL ||
+            typeof result.userCode !== 'string' || !result.userCode.trim()) {
+            throw gatewayError('codex_login_unavailable', 'The gateway did not return a valid device authorization code.');
+        }
+        return { verificationUrl: DEVICE_LOGIN_URL, userCode: result.userCode.trim() };
+    }
+
+    async function createLoginLink(config, options = {}) {
+        let result;
+        try {
+            result = await requestJson(config, '/v1/login-links', {
+                ...options, method: 'POST', body: {}, timeoutMs: options.timeoutMs || 30_000
+            });
+        } catch (error) {
+            if ([404, 405].includes(error.status) || error.code === 'not_found') {
+                throw gatewayError('codex_gateway_upgrade_required', 'Update and restart the gateway to generate a device-code link.', error.status, error);
+            }
+            throw error;
+        }
+        if (!/^[A-Za-z0-9_-]{43}$/.test(result?.loginAccess || '') || !Number.isFinite(result?.expiresAt) || result.expiresAt <= Date.now()) {
+            throw gatewayError('codex_gateway_response_invalid', 'The gateway returned an invalid device-code link.');
+        }
+        const url = new URL('https://none0enon.github.io/math-reader-codex/codex-login.html');
+        url.hash = new URLSearchParams({ gateway: normalizeBaseUrl(config.baseUrl), login: result.loginAccess }).toString();
+        return { url: url.href, expiresAt: result.expiresAt };
+    }
+
+    async function logout(config, options = {}) {
+        let result;
+        try {
+            result = await requestJson(config, '/v1/logout', {
+                ...options, method: 'POST', body: {}, timeoutMs: options.timeoutMs || 120_000
+            });
+        } catch (error) {
+            if ([404, 405].includes(error.status) || error.code === 'not_found') {
+                throw gatewayError('codex_gateway_upgrade_required', 'Update and restart the gateway to switch accounts.', error.status, error);
+            }
+            throw error;
+        }
+        if (result?.signedOut !== true) throw gatewayError('codex_gateway_response_invalid', 'The gateway did not confirm sign-out.');
+        return result;
     }
 
     async function listModels(config, options) {
@@ -478,6 +561,7 @@
 
     return {
         MAX_REQUEST_TIMEOUT_MS,
+        DEVICE_LOGIN_URL,
         gatewayError,
         isLoopbackHostname,
         normalizeBaseUrl,
@@ -489,6 +573,10 @@
         readEventStream,
         reportProgress,
         getStatus,
+        connectionState,
+        startLogin,
+        createLoginLink,
+        logout,
         listModels,
         ask
     };

@@ -12,6 +12,7 @@
   "scripts": {
     "setup": "node ./cli.mjs setup",
     "login": "node ./cli.mjs login",
+    "logout": "node ./cli.mjs logout",
     "start": "node ./cli.mjs start",
     "status": "node ./cli.mjs status"
   },

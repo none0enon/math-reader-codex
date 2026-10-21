@@ -68,6 +68,14 @@ async function login(config) {
   process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
 }
 
+async function logout(config) {
+  await ensureRuntimeState(config);
+  await runInteractive(config.codexBin, ['logout'], {
+    cwd: config.workspaceDirectory,
+    env: sanitizedCodexEnvironment(process.env, config),
+  });
+}
+
 async function main() {
   if (!process.versions.node || Number(process.versions.node.split('.')[0]) < 22) {
     throw new Error('This gateway requires Node.js 22 or later.');
@@ -81,6 +89,9 @@ async function main() {
     case 'login':
       await login(config);
       break;
+    case 'logout':
+      await logout(config);
+      break;
     case 'status':
       await ensureRuntimeState(config);
       process.stdout.write(`${JSON.stringify(await readIsolatedStatus(config), null, 2)}\n`);
@@ -91,7 +102,7 @@ async function main() {
       break;
     }
     default:
-      throw new Error(`Unknown command: ${command}. Expected setup, login, start, or status.`);
+      throw new Error(`Unknown command: ${command}. Expected setup, login, logout, start, or status.`);
   }
 }
 
