@@ -123,9 +123,11 @@ export class GatewayEngine {
   async #status() {
     let account = null;
     let statusError;
+    let accountRead = false;
     if (this.appServer.running && this.appServer.initialized) {
       try {
         account = await this.appServer.readAccount({ refreshToken: true, timeoutMs: 12_000 });
+        accountRead = true;
         requireChatgptAccount(account);
         // This authenticated upstream request also detects a revoked access token.
         await this.appServer.request('account/rateLimits/read', {}, { timeoutMs: 12_000 });
@@ -133,9 +135,9 @@ export class GatewayEngine {
         statusError = error;
       }
     }
-    const auth = publicAuth(account);
-    const ready = Boolean(this.appServer.running && this.appServer.initialized && auth.type === 'chatgpt' && !statusError);
     const loginRequired = statusError?.code === 'chatgpt_login_required' || account?.type === 'apiKey';
+    const auth = accountRead || loginRequired ? publicAuth(account) : { type: 'unknown' };
+    const ready = Boolean(this.appServer.running && this.appServer.initialized && auth.type === 'chatgpt' && !statusError);
     return {
       ready,
       checkedAt: new Date().toISOString(),
@@ -147,7 +149,7 @@ export class GatewayEngine {
       },
       requests: { active: this.activeRequests, pending: 0 },
       ...(account?.type === 'apiKey' ? { authError: 'api_key_auth_refused' } : {}),
-      ...(statusError ? { statusError: statusError.code || 'codex_unavailable' } : {}),
+      ...(!ready ? { statusError: statusError?.code || 'codex_unavailable' } : {}),
     };
   }
 
@@ -180,6 +182,9 @@ export class GatewayEngine {
       return await this.loginAttempt;
     } catch (error) {
       clear();
+      if (error.code === 'codex_rpc_error' && /unknown variant|invalid params|method not found|chatgptDeviceCode/i.test(error.message || '')) {
+        throw new GatewayError('codex_login_unavailable', 'Update and restart the gateway, or run npm run login in its gateway directory to obtain a device code.', 503, { cause: error });
+      }
       throw error;
     }
   }

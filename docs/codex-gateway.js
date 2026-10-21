@@ -7,6 +7,7 @@
 
     const MAX_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
     const DEFAULT_REQUEST_TIMEOUT_MS = MAX_REQUEST_TIMEOUT_MS;
+    const DEVICE_LOGIN_URL = 'https://auth.openai.com/codex/device';
     // The gateway enforces the lecture deadline. Reconnected event streams
     // attach to the same background job until that deadline or completion.
     const LECTURE_JOB_MAX_WAIT_MS = 6 * 60 * 60 * 1000;
@@ -358,6 +359,44 @@
         return requestJson(config, '/v1/status', options);
     }
 
+    function connectionState(status) {
+        if (!status || typeof status !== 'object' || typeof status.ready !== 'boolean') {
+            throw gatewayError('codex_gateway_response_invalid', 'The gateway returned an invalid connection status.');
+        }
+        // Older gateways report auth.type but omit recovery and checkedAt.
+        // An explicit unauthenticated account must still offer authorization.
+        const loginRequired = status.recovery === 'login' || status.statusError === 'chatgpt_login_required' ||
+            status.authError === 'api_key_auth_refused' || ['none', 'apiKey'].includes(status.auth?.type);
+        const ready = status.ready && status.auth?.type === 'chatgpt' && !!status.checkedAt &&
+            !status.statusError && !loginRequired;
+        return {
+            ready,
+            authType: loginRequired ? 'none' : status.auth?.type === 'chatgpt' ? 'chatgpt' : 'unknown',
+            recovery: ready ? null : loginRequired ? 'login' : 'gateway',
+            code: ready ? null : loginRequired ? 'chatgpt_login_required' :
+                status.statusError || (status.checkedAt ? 'codex_unavailable' : 'codex_gateway_upgrade_required')
+        };
+    }
+
+    async function startLogin(config, options = {}) {
+        let result;
+        try {
+            result = await requestJson(config, '/v1/login', {
+                ...options, method: 'POST', body: {}, timeoutMs: options.timeoutMs || 30_000
+            });
+        } catch (error) {
+            if (error.code === 'not_found' || [404, 405].includes(error.status)) {
+                throw gatewayError('codex_gateway_upgrade_required', 'Update and restart the gateway to obtain a device code here.', error.status, error);
+            }
+            throw error;
+        }
+        if (!result || result.verificationUrl !== DEVICE_LOGIN_URL ||
+            typeof result.userCode !== 'string' || !result.userCode.trim()) {
+            throw gatewayError('codex_login_unavailable', 'The gateway did not return a valid device authorization code.');
+        }
+        return { verificationUrl: DEVICE_LOGIN_URL, userCode: result.userCode.trim() };
+    }
+
     async function listModels(config, options) {
         const data = await requestJson(config, '/v1/models', options);
         if (!Array.isArray(data.data)) {
@@ -478,6 +517,7 @@
 
     return {
         MAX_REQUEST_TIMEOUT_MS,
+        DEVICE_LOGIN_URL,
         gatewayError,
         isLoopbackHostname,
         normalizeBaseUrl,
@@ -489,6 +529,8 @@
         readEventStream,
         reportProgress,
         getStatus,
+        connectionState,
+        startLogin,
         listModels,
         ask
     };
