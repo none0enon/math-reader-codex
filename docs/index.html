@@ -7308,7 +7308,7 @@
             codex_login_guide:'也可在网关电脑的 gateway 目录运行 npm run login，网关会自动载入新的登录。',
             codex_reconnect_guide:'无法连接网关。请确认网关电脑 gateway 目录中的 npm start 正在运行、VPN/Tailscale 已连接、HTTPS 转发正常，并核对本页 Gateway URL 和访问令牌；网关恢复响应后本页自动继续。',
             codex_service_guide:'Gateway 已连接，但 Codex 服务未就绪（原因见上）。网关每次检查时会自动重启已退出的 Codex 进程；若持续失败，请查看网关电脑的终端输出，并确认网关电脑可以访问 chatgpt.com。',
-            codex_gateway_outdated:'网关程序版本过旧，无法自动登录和自动恢复。请在网关电脑的 gateway 目录执行 git pull 和 npm ci，然后重启 npm start。',
+            codex_gateway_outdated:'网关电脑上运行的还是旧版网关，它没有网页登录功能，所以这里拿不到设备代码。请在网关电脑上按 Ctrl+C 停掉正在运行的 npm start，在仓库的 gateway 目录执行：git pull && npm ci && npm start。新网关启动后会自动发起 ChatGPT 登录，终端和本页显示同一个设备代码。',
             codex_token_guide:'网关访问令牌无效。请从网关电脑的 gateway/.state/gateway-token 重新复制令牌并保存，然后测试连接。',
             ai_personal_greeting:'你好，{0}！{1}',
             app_title:'math-reader-codex', notification_enabled_body:'通知已开启',
@@ -7345,7 +7345,7 @@
             codex_login_guide:'You can also run npm run login in the gateway directory on the gateway computer; the gateway loads the new sign-in automatically.',
             codex_reconnect_guide:'Cannot reach the gateway. Check that npm start is running in the gateway directory on the gateway computer, VPN/Tailscale is connected, HTTPS forwarding works, and the Gateway URL and token on this page are correct. This page continues automatically once the gateway responds.',
             codex_service_guide:'The gateway is reachable, but its Codex service is not ready (reason above). The gateway restarts an exited Codex process on every check. If this persists, check the gateway terminal output and confirm the gateway computer can reach chatgpt.com.',
-            codex_gateway_outdated:'The gateway program is outdated and cannot sign in or recover automatically. In the gateway directory on the gateway computer, run git pull and npm ci, then restart npm start.',
+            codex_gateway_outdated:'The gateway computer is still running an old gateway without web sign-in, so no device code can be requested here. On the gateway computer, stop the running npm start with Ctrl+C, then run in the repository’s gateway directory: git pull && npm ci && npm start. The new gateway starts ChatGPT sign-in by itself and shows the same device code in its terminal and on this page.',
             codex_token_guide:'The gateway token is invalid. Copy it again from gateway/.state/gateway-token on the gateway computer, save it, then test the connection.',
             ai_personal_greeting:'Hi, {0}! {1}',
             app_title:'math-reader-codex', notification_enabled_body:'Notifications are enabled',
@@ -7382,7 +7382,7 @@
             codex_login_guide:'Vous pouvez aussi exécuter npm run login dans le dossier gateway sur l’ordinateur de la passerelle ; la passerelle charge automatiquement la nouvelle connexion.',
             codex_reconnect_guide:'Impossible de joindre la passerelle. Vérifiez que npm start s’exécute dans le dossier gateway sur l’ordinateur de la passerelle, que le VPN/Tailscale est connecté, que le transfert HTTPS fonctionne, et que l’URL et le jeton de cette page sont corrects. Cette page reprend automatiquement dès que la passerelle répond.',
             codex_service_guide:'La passerelle répond, mais son service Codex n’est pas prêt (raison ci-dessus). La passerelle redémarre un processus Codex arrêté à chaque vérification. Si le problème persiste, consultez la sortie du terminal de la passerelle et vérifiez que l’ordinateur de la passerelle accède à chatgpt.com.',
-            codex_gateway_outdated:'Le programme de la passerelle est obsolète et ne peut ni se connecter ni se rétablir automatiquement. Dans le dossier gateway sur l’ordinateur de la passerelle, exécutez git pull et npm ci, puis redémarrez npm start.',
+            codex_gateway_outdated:'L’ordinateur de la passerelle exécute encore une ancienne passerelle sans connexion web : aucun code d’appareil ne peut être demandé ici. Sur cet ordinateur, arrêtez npm start avec Ctrl+C, puis exécutez dans le dossier gateway du dépôt : git pull && npm ci && npm start. La nouvelle passerelle lance la connexion ChatGPT elle-même et affiche le même code dans son terminal et sur cette page.',
             codex_token_guide:'Le jeton de passerelle est invalide. Recopiez gateway/.state/gateway-token depuis l’ordinateur de la passerelle, enregistrez et vérifiez la connexion.',
             ai_personal_greeting:'Bonjour, {0} ! {1}',
             app_title:'math-reader-codex', notification_enabled_body:'Les notifications sont activées',
@@ -13252,7 +13252,10 @@
                 if (revision !== codexConnectionCheck) return;
                 const authLabel = codexAccountLabel(status?.auth);
                 const ready = status?.ready === true && !!status.checkedAt && !status.statusError;
-                const needsLogin = !ready && codexStatusNeedsLogin(status);
+                // Gateways from before web sign-in report no recovery and have no
+                // /v1/login: the browser rejects its CORS preflight as "Failed to fetch".
+                const outdated = !ready && !('recovery' in (status || {}));
+                const needsLogin = !ready && !outdated && codexStatusNeedsLogin(status);
                 if (ready) {
                     const signedIn = !!codexLoginView;
                     codexRecoveryShown = '';
@@ -13260,6 +13263,10 @@
                     clearCodexLogin();
                     setCodexGatewayStatus(i18n('codex_status_ready', authLabel), 'success');
                     if (signedIn) showToast(i18n('codex_login_success'));
+                } else if (outdated) {
+                    showCodexRecovery({ code: 'codex_gateway_upgrade_required', message: i18n('codex_status_not_ready', authLabel) },
+                        'gateway', recover && !codexRecoveryShown);
+                    codexRecoveryShown = 'codex_gateway_upgrade_required';
                 } else if (needsLogin) {
                     if (recover && !codexRecoveryShown && !apiModalOpen()) showAPIModal({ checkConnection: false });
                     codexRecoveryShown = 'login';
