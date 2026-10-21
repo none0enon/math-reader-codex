@@ -199,8 +199,12 @@ export function createGatewayHandler({ config, engine, token }) {
         ? Math.max(config.requestTimeoutMs, config.lectureTimeoutMs + 30_000)
         : config.requestTimeoutMs);
       if (request.method === 'POST' && url.pathname === '/v1/login') {
-        await readJsonBody(request, 1024, cancellation.signal);
-        sendJson(response, 200, await engine.startLogin());
+        const body = await readJsonBody(request, 1024, cancellation.signal);
+        if (!body || typeof body !== 'object' || Array.isArray(body) ||
+            (body.switchAccount !== undefined && typeof body.switchAccount !== 'boolean')) {
+          throw new GatewayError('invalid_request', 'switchAccount must be a boolean.', 400);
+        }
+        sendJson(response, 200, await engine.startLogin({ switchAccount: body.switchAccount === true }));
         return;
       }
       if (request.method === 'POST' && url.pathname === '/v1/lecture-jobs') {

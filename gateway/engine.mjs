@@ -103,6 +103,8 @@ export class GatewayEngine {
     this.activeRequests = 0;
     this.statusCheck = null;
     this.loginAttempt = null;
+    this.loginLaunch = null;
+    this.authRevision = 0;
   }
 
   async start() {
@@ -116,16 +118,22 @@ export class GatewayEngine {
   async status() {
     // Share only simultaneous probes; every later check verifies upstream again.
     if (this.statusCheck) return this.statusCheck;
-    this.statusCheck = this.#status().finally(() => { this.statusCheck = null; });
-    return this.statusCheck;
+    const check = this.#status().finally(() => {
+      if (this.statusCheck === check) this.statusCheck = null;
+    });
+    this.statusCheck = check;
+    return check;
   }
 
   async #status() {
+    const revision = this.authRevision;
     let account = null;
+    let accountKnown = false;
     let statusError;
     if (this.appServer.running && this.appServer.initialized) {
       try {
         account = await this.appServer.readAccount({ refreshToken: true, timeoutMs: 12_000 });
+        accountKnown = true;
         requireChatgptAccount(account);
         // This authenticated upstream request also detects a revoked access token.
         await this.appServer.request('account/rateLimits/read', {}, { timeoutMs: 12_000 });
@@ -133,9 +141,11 @@ export class GatewayEngine {
         statusError = error;
       }
     }
-    const auth = publicAuth(account);
-    const ready = Boolean(this.appServer.running && this.appServer.initialized && auth.type === 'chatgpt' && !statusError);
+    if (revision !== this.authRevision) return this.#status();
     const loginRequired = statusError?.code === 'chatgpt_login_required' || account?.type === 'apiKey';
+    const auth = accountKnown ? publicAuth(account) : { type: 'unknown' };
+    const ready = Boolean(!this.loginLaunch && this.appServer.running && this.appServer.initialized &&
+      auth.type === 'chatgpt' && !statusError);
     return {
       ready,
       checkedAt: new Date().toISOString(),
@@ -146,42 +156,83 @@ export class GatewayEngine {
         initialized: this.appServer.initialized,
       },
       requests: { active: this.activeRequests, pending: 0 },
+      authorization: { canSwitchAccount: true, pending: Boolean(this.loginAttempt),
+        expiresAt: this.loginAttempt?.expiresAt || null },
       ...(account?.type === 'apiKey' ? { authError: 'api_key_auth_refused' } : {}),
-      ...(statusError ? { statusError: statusError.code || 'codex_unavailable' } : {}),
+      ...(!ready ? { statusError: this.loginLaunch ? 'codex_authorization_starting' :
+        statusError?.code || 'codex_unavailable' } : {}),
     };
   }
 
-  async startLogin() {
-    if (!this.appServer.running || !this.appServer.initialized) await this.appServer.start();
-    if (this.loginAttempt) return this.loginAttempt;
-    let loginId;
-    const clear = () => {
-      clearTimeout(timer);
-      this.loginAttempt = null;
-      this.appServer.removeListener('notification', onNotification);
-      this.appServer.removeListener('closed', clear);
-    };
-    const onNotification = notification => {
-      if (notification.method === 'account/login/completed' && notification.params?.loginId === loginId) clear();
-    };
-    const timer = setTimeout(clear, 10 * 60_000);
-    timer.unref?.();
-    this.appServer.on('notification', onNotification);
-    this.appServer.once('closed', clear);
-    this.loginAttempt = this.appServer.request('account/login/start', { type: 'chatgptDeviceCode' })
-      .then(result => {
-        if (!result?.verificationUrl || !result?.userCode) {
-          throw new GatewayError('codex_login_unavailable', 'Run npm run login in the gateway directory, then check the connection again.', 503);
-        }
-        loginId = result.loginId;
-        return { verificationUrl: result.verificationUrl, userCode: result.userCode };
-      });
-    try {
-      return await this.loginAttempt;
-    } catch (error) {
-      clear();
-      throw error;
+  startLogin({ switchAccount = false } = {}) {
+    if (this.loginLaunch) {
+      if (switchAccount) throw new GatewayError('codex_authorization_starting', 'Authorization is already starting.', 409);
+      return this.loginLaunch;
     }
+    if (!switchAccount && this.loginAttempt) return this.loginAttempt.promise;
+    if (this.activeRequests) {
+      throw new GatewayError('codex_requests_active', 'Finish active Codex requests before starting authorization.', 409);
+    }
+    this.authRevision++;
+    this.statusCheck = null;
+    const launch = this.#startAuthorization(switchAccount).catch(error => {
+      if (error.code === 'codex_rpc_error' && /unknown variant|invalid params|method not found/i.test(error.message || '')) {
+        throw new GatewayError('codex_login_unavailable', 'Update and restart the gateway to enable device authorization.', 503, { cause: error });
+      }
+      throw error;
+    }).finally(() => {
+      if (this.loginLaunch === launch) this.loginLaunch = null;
+    });
+    this.loginLaunch = launch;
+    return launch;
+  }
+
+  async #startAuthorization(switchAccount) {
+    if (!this.appServer.running || !this.appServer.initialized) await this.appServer.start();
+    if (this.loginAttempt) {
+      const previous = this.loginAttempt;
+      previous.clear();
+      if (previous.id) await this.appServer.request('account/login/cancel', { loginId: previous.id });
+    }
+    if (switchAccount) await this.appServer.request('account/logout', {});
+    const attempt = { id: null, expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() };
+    const completed = notification => {
+      if (notification.method === 'account/login/completed' && notification.params?.loginId === attempt.id) {
+        this.authRevision++;
+        this.statusCheck = null;
+        attempt.clear();
+      }
+    };
+    attempt.clear = () => {
+      clearTimeout(attempt.timer);
+      if (this.loginAttempt === attempt) this.loginAttempt = null;
+      this.appServer.removeListener('notification', completed);
+      this.appServer.removeListener('closed', attempt.clear);
+    };
+    attempt.timer = setTimeout(() => {
+      attempt.clear();
+      if (attempt.id && this.appServer.running) {
+        this.appServer.request('account/login/cancel', { loginId: attempt.id }).catch(() => {});
+      }
+    }, 10 * 60_000);
+    attempt.timer.unref?.();
+    this.appServer.on('notification', completed);
+    this.appServer.once('closed', attempt.clear);
+    this.loginAttempt = attempt;
+    attempt.promise = this.appServer.request('account/login/start', { type: 'chatgptDeviceCode' })
+      .then(result => {
+        if (result?.verificationUrl !== 'https://auth.openai.com/codex/device' ||
+            typeof result.userCode !== 'string' || !result.userCode.trim() || !result.loginId) {
+          throw new GatewayError('codex_login_unavailable', 'The gateway could not obtain a device authorization code. Update the gateway or run npm run login on its computer.', 503);
+        }
+        attempt.id = result.loginId;
+        return { verificationUrl: result.verificationUrl, userCode: result.userCode.trim(),
+          expiresAt: attempt.expiresAt, accountSwitched: switchAccount };
+      }).catch(error => {
+        attempt.clear();
+        throw error;
+      });
+    return attempt.promise;
   }
 
   async models({ signal } = {}) {
@@ -192,6 +243,7 @@ export class GatewayEngine {
   }
 
   async ask(body, { signal, onProgress, onStart, lecture = false } = {}) {
+    if (this.loginLaunch) throw new GatewayError('codex_authorization_starting', 'Authorization is starting. Complete authorization and retry.', 409);
     const request = validateAskBody(body);
     if (signal?.aborted) throw abortError(signal);
     this.activeRequests += 1;

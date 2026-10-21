@@ -6079,7 +6079,7 @@
 
     <!-- Every Codex request can display its public output while it streams. -->
     <div class="modal-overlay" id="codexOutputModal" role="dialog" aria-modal="true"
-        aria-labelledby="codexOutputTitle" onclick="closeCodexOutput()" style="z-index:11000;">
+        aria-labelledby="codexOutputTitle" onclick="closeCodexOutput()">
         <div class="modal-content" onclick="event.stopPropagation()">
             <div class="modal-header">
                 <span class="modal-title" id="codexOutputTitle" data-i18n="codex_output_title">Codex 返回内容</span>
@@ -6157,8 +6157,27 @@
                 <div class="codex-gateway-status" id="codexGatewayStatus" role="status" aria-live="polite"></div>
                 <button type="button" class="fetch-models-btn" style="width:100%;margin-bottom:4px;"
                     onclick="testCodexGatewayConnection()" data-i18n="codex_test_connection">测试 Codex Gateway</button>
-                <button type="button" class="fetch-models-btn" id="codexLoginButton" hidden
-                    onclick="loginCodexGateway()" data-i18n="codex_login">重新登录 ChatGPT</button>
+                <div class="form-group">
+                    <label class="form-label" for="codexAuthorizationUrl" data-i18n="codex_authorization_url">授权链接（可复制）</label>
+                    <input type="text" class="form-input" id="codexAuthorizationUrl" readonly autocomplete="off" spellcheck="false"
+                        value="https://auth.openai.com/codex/device" onclick="this.select()" aria-describedby="codexLoginSteps">
+                    <button type="button" class="fetch-models-btn" onclick="copyCodexAuthorization('codexAuthorizationUrl')"
+                        data-i18n="codex_copy_authorization">复制授权链接</button>
+                    <a href="https://auth.openai.com/codex/device" target="_blank" rel="noopener noreferrer"
+                        data-i18n="codex_login_page">打开 ChatGPT 授权页</a>
+                    <div class="setting-item-desc" id="codexLoginSteps" data-i18n="codex_login_steps">在本页获取设备代码，将授权链接复制到你选择的浏览器或无痕窗口，使用目标 Google 账号登录 ChatGPT 并输入代码。完成后返回测试连接。</div>
+                    <button type="button" class="fetch-models-btn" id="codexLoginButton"
+                        onclick="loginCodexGateway()" data-i18n="codex_login">获取设备代码</button>
+                    <button type="button" class="fetch-models-btn" id="codexSwitchAccountButton"
+                        onclick="loginCodexGateway(true)" data-i18n="codex_switch_account">退出网关当前账号并获取新代码</button>
+                </div>
+                <div class="form-group" id="codexDeviceCodePanel" hidden>
+                    <label class="form-label" for="codexDeviceCode" data-i18n="codex_device_code_label">设备代码</label>
+                    <input type="text" class="form-input" id="codexDeviceCode" readonly autocomplete="off" spellcheck="false"
+                        onclick="this.select()">
+                    <button type="button" class="fetch-models-btn" onclick="copyCodexAuthorization('codexDeviceCode')"
+                        data-i18n="codex_copy_device_code">复制设备代码</button>
+                </div>
                 <button type="button" class="fetch-models-btn" onclick="showCodexOutput()"
                     data-i18n="codex_output_title">Codex 返回内容</button>
             </div>
@@ -7297,8 +7316,19 @@
             codex_output_clear:'清除已结束任务的预览', codex_output_empty:'暂无 Codex 生成任务',
             codex_output_running:'生成中', codex_output_completed:'返回完成', codex_output_failed:'生成失败',
             codex_output_preparing:'正在准备请求…',
-            codex_login:'重新登录 ChatGPT', codex_login_page:'打开 ChatGPT 授权页',
-            codex_login_guide:'ChatGPT 授权已失效或尚未登录。点击「重新登录 ChatGPT」，在授权页输入设备代码；完成后点击「测试 Codex Gateway」。也可在网关电脑的 gateway 目录运行 npm run login。',
+            codex_login:'获取设备代码', codex_login_page:'打开 ChatGPT 授权页',
+            codex_authorization_url:'授权链接（可复制）', codex_copy_authorization:'复制授权链接',
+            codex_device_code_label:'设备代码', codex_copy_device_code:'复制设备代码',
+            codex_copy_selected:'内容已选中，请长按或使用系统复制。',
+            codex_switch_account:'退出网关当前账号并获取新代码',
+            codex_login_steps:'在本页获取设备代码，将授权链接复制到你选择的浏览器或无痕窗口，使用目标 Google 账号登录 ChatGPT 并输入代码。完成后返回测试连接。',
+            codex_login_starting:'正在获取设备代码，代码将在本页显示…',
+            codex_switch_starting:'正在退出网关当前账号并获取新设备代码…',
+            codex_auth_unknown:'授权状态暂时无法确认',
+            codex_login_guide:'ChatGPT 授权已失效或尚未登录。下方提供可复制授权链接和「获取设备代码」按钮。将链接复制到所选浏览器，登录目标账号并输入设备代码，完成后返回测试连接。',
+            codex_login_upgrade_guide:'请在网关电脑的 math-reader-codex 项目目录运行 git pull --ff-only，进入 gateway 运行 npm ci，再重启原来的网关进程。更新后可在本页获取设备代码或切换账号；手动登录可在 gateway 运行 npm run login。',
+            codex_requests_active_guide:'请先结束网关上正在生成的 Codex 任务，再获取设备代码或切换账号。',
+            codex_authorization_starting_guide:'正在启动授权，请稍后获取设备代码，完成授权后重新测试连接。',
             codex_reconnect_guide:'请在网关电脑的 gateway 目录运行 npm start；确认 VPN/Tailscale 已连接、HTTPS 网关转发正常，核对本页 Gateway URL 和访问令牌，然后重新测试连接。',
             codex_token_guide:'网关访问令牌无效。请从网关电脑的 gateway/.state/gateway-token 重新复制令牌并保存，然后测试连接。',
             codex_device_code:'设备代码：{0}。完成授权后重新测试连接。',
@@ -7326,8 +7356,19 @@
             codex_output_clear:'Clear previews for finished requests', codex_output_empty:'No Codex generation requests yet',
             codex_output_running:'Generating', codex_output_completed:'Response complete', codex_output_failed:'Generation failed',
             codex_output_preparing:'Preparing the request…',
-            codex_login:'Sign in to ChatGPT again', codex_login_page:'Open ChatGPT authorization',
-            codex_login_guide:'ChatGPT authorization has expired or is missing. Click Sign in to ChatGPT again, enter the device code on the authorization page, then test the connection. You can also run npm run login in the gateway directory on the gateway computer.',
+            codex_login:'Get a device code', codex_login_page:'Open ChatGPT authorization',
+            codex_authorization_url:'Authorization link (copyable)', codex_copy_authorization:'Copy authorization link',
+            codex_device_code_label:'Device code', codex_copy_device_code:'Copy device code',
+            codex_copy_selected:'Text selected. Use the system Copy action.',
+            codex_switch_account:'Sign out of the gateway and get a new code',
+            codex_login_steps:'Get a code here, copy the authorization link into your chosen browser or a private window, sign in to ChatGPT with the intended Google account, and enter the code. Then return here and test the connection.',
+            codex_login_starting:'Getting a device code to display on this page…',
+            codex_switch_starting:'Signing out of the gateway and getting a new device code…',
+            codex_auth_unknown:'Authorization could not be verified',
+            codex_login_guide:'ChatGPT authorization has expired or is missing. Copy the link below into your chosen browser, get a device code, sign in to ChatGPT with the intended account, and enter the code. Then test the connection here.',
+            codex_login_upgrade_guide:'On the gateway computer, run git pull --ff-only in math-reader-codex, run npm ci in gateway, and restart the gateway process. Then get a device code or switch accounts here. For manual login, run npm run login in gateway.',
+            codex_requests_active_guide:'Finish active Codex requests on the gateway before getting a device code or switching accounts.',
+            codex_authorization_starting_guide:'Authorization is starting. Get a device code shortly, complete authorization, and test the connection again.',
             codex_reconnect_guide:'Run npm start in the gateway directory on the gateway computer. Check VPN/Tailscale, HTTPS forwarding, Gateway URL and token, then test the connection again.',
             codex_token_guide:'The gateway token is invalid. Copy it again from gateway/.state/gateway-token on the gateway computer, save it, then test the connection.',
             codex_device_code:'Device code: {0}. Test the connection after authorization.',
@@ -7355,8 +7396,19 @@
             codex_output_clear:'Effacer les aperçus des requêtes terminées', codex_output_empty:'Aucune requête Codex pour le moment',
             codex_output_running:'Génération en cours', codex_output_completed:'Réponse terminée', codex_output_failed:'Échec de la génération',
             codex_output_preparing:'Préparation de la requête…',
-            codex_login:'Se reconnecter à ChatGPT', codex_login_page:'Ouvrir l’autorisation ChatGPT',
-            codex_login_guide:'L’autorisation ChatGPT a expiré ou manque. Reconnectez-vous, saisissez le code sur la page d’autorisation, puis vérifiez la connexion. Vous pouvez aussi exécuter npm run login dans le dossier gateway sur l’ordinateur de la passerelle.',
+            codex_login:'Obtenir un code', codex_login_page:'Ouvrir l’autorisation ChatGPT',
+            codex_authorization_url:'Lien d’autorisation (copiable)', codex_copy_authorization:'Copier le lien d’autorisation',
+            codex_device_code_label:'Code de l’appareil', codex_copy_device_code:'Copier le code',
+            codex_copy_selected:'Texte sélectionné. Utilisez l’action Copier du système.',
+            codex_switch_account:'Déconnecter la passerelle et obtenir un nouveau code',
+            codex_login_steps:'Obtenez le code ici, copiez le lien dans le navigateur choisi ou une fenêtre privée, connectez-vous à ChatGPT avec le compte Google souhaité et saisissez le code. Revenez vérifier la connexion.',
+            codex_login_starting:'Obtention du code qui sera affiché sur cette page…',
+            codex_switch_starting:'Déconnexion de la passerelle et obtention d’un nouveau code…',
+            codex_auth_unknown:'Autorisation non vérifiée',
+            codex_login_guide:'L’autorisation ChatGPT a expiré ou manque. Copiez le lien ci-dessous dans le navigateur choisi, obtenez un code, connectez-vous à ChatGPT avec le compte souhaité et saisissez le code. Revenez vérifier la connexion.',
+            codex_login_upgrade_guide:'Sur l’ordinateur de la passerelle, exécutez git pull --ff-only dans math-reader-codex, puis npm ci dans gateway, et redémarrez le processus. Obtenez ensuite un code ou changez de compte ici. La commande npm run login dans gateway permet aussi la connexion manuelle.',
+            codex_requests_active_guide:'Terminez les générations Codex sur la passerelle avant d’obtenir un code ou de changer de compte.',
+            codex_authorization_starting_guide:'L’autorisation démarre. Obtenez ensuite le code, autorisez le compte et vérifiez la connexion.',
             codex_reconnect_guide:'Exécutez npm start dans le dossier gateway sur l’ordinateur de la passerelle. Vérifiez VPN/Tailscale, le transfert HTTPS, l’URL et le jeton, puis vérifiez la connexion.',
             codex_token_guide:'Le jeton de passerelle est invalide. Recopiez gateway/.state/gateway-token depuis l’ordinateur de la passerelle, enregistrez et vérifiez la connexion.',
             codex_device_code:'Code de l’appareil : {0}. Vérifiez la connexion après l’autorisation.',
@@ -12879,6 +12931,7 @@
         let codexRecoveryShown = '';
         let codexLoginView = null;
         let codexLoginStarting = false;
+        let codexAuthorizationScope = 0;
 
         function isPackagedAndroidRuntime() {
             return window.location?.hostname === 'appassets.androidplatform.net' ||
@@ -12916,9 +12969,16 @@
 
         function invalidateCodexConnection() {
             codexConnectionCheck++;
-            codexLoginView = null;
+            codexAuthorizationScope++;
             setCodexGatewayStatus('');
-            document.getElementById('codexLoginButton').hidden = true;
+            if (!codexLoginView || codexLoginView.config !== JSON.stringify(codexGatewayFormConfig()) ||
+                codexLoginView.expiresAt <= Date.now()) clearCodexAuthorization();
+        }
+
+        function clearCodexAuthorization() {
+            codexLoginView = null;
+            document.getElementById('codexDeviceCode').value = '';
+            document.getElementById('codexDeviceCodePanel').hidden = true;
         }
 
         function showCodexRecovery(error, recovery, open = true) {
@@ -12927,14 +12987,16 @@
             }
             const code = error?.code || '';
             const login = recovery === 'login' || code === 'chatgpt_login_required';
-            const key = login ? 'codex_login_guide' : code === 'unauthorized' ? 'codex_token_guide' : 'codex_reconnect_guide';
+            const upgrade = code === 'codex_gateway_upgrade_required' || code === 'codex_login_unavailable';
+            const key = upgrade ? 'codex_login_upgrade_guide' : code === 'codex_requests_active' ? 'codex_requests_active_guide' :
+                code === 'codex_authorization_starting' ? 'codex_authorization_starting_guide' :
+                code === 'unauthorized' ? 'codex_token_guide' : login ? 'codex_login_guide' : 'codex_reconnect_guide';
             setCodexGatewayStatus((error?.message ? error.message + '\n\n' : '') + i18n(key), 'error');
-            document.getElementById('codexLoginButton').hidden = !login;
         }
 
         function handleCodexRequestError(error) {
             const code = error?.code || '';
-            if (code === 'chatgpt_login_required' || code === 'unauthorized' ||
+            if (code === 'chatgpt_login_required' || code === 'unauthorized' || code === 'codex_authorization_starting' ||
                 /^(?:codex_gateway_(?:network_error|timeout|stream_disconnected|response_invalid|upgrade_required|url_required|token_required)|codex_unavailable|codex_timeout)$/.test(code)) {
                 closeCodexOutput();
                 codexConnectionCheck++;
@@ -12944,42 +13006,53 @@
             }
         }
 
-        async function loginCodexGateway() {
-            const button = document.getElementById('codexLoginButton');
-            button.disabled = true;
+        async function copyCodexAuthorization(id) {
+            const input = document.getElementById(id);
+            if (!input?.value) return;
+            try {
+                await navigator.clipboard.writeText(input.value);
+                showToast(i18n('copied'));
+            } catch (_) {
+                input.focus();
+                input.select();
+                input.setSelectionRange(0, input.value.length);
+                let copied = false;
+                try { copied = document.execCommand('copy'); } catch (_) {}
+                showToast(i18n(copied ? 'copied' : 'codex_copy_selected'));
+            }
+        }
+
+        async function loginCodexGateway(switchAccount = false) {
+            if (codexLoginStarting) return;
+            const buttons = ['codexLoginButton', 'codexSwitchAccountButton'].map(id => document.getElementById(id));
+            buttons.forEach(button => { button.disabled = true; });
             codexLoginStarting = true;
             ++codexConnectionCheck;
             const config = codexGatewayFormConfig();
-            // Reserve the window during the click so popup blocking cannot hide it.
-            const popup = window.open('about:blank', '_blank');
-            if (popup) popup.opener = null;
+            const scope = ++codexAuthorizationScope;
+            clearCodexAuthorization();
+            setCodexGatewayStatus(i18n(switchAccount ? 'codex_switch_starting' : 'codex_login_starting'));
             try {
-                const result = await codexGatewayModule().requestJson(config, '/v1/login', {
-                    method: 'POST', body: {}, timeoutMs: 30_000
-                });
-                if (JSON.stringify(config) !== JSON.stringify(codexGatewayFormConfig())) { popup?.close(); return; }
-                const url = new URL(result.verificationUrl);
-                if (url.protocol !== 'https:' || url.hostname !== 'auth.openai.com' || url.pathname !== '/codex/device') {
-                    throw new Error('Invalid ChatGPT device authorization URL');
-                }
-                codexLoginView = { code: result.userCode, url: url.href, expiresAt: Date.now() + 10 * 60_000 };
+                const result = await codexGatewayModule().authorize(config, { switchAccount });
+                if (scope !== codexAuthorizationScope) return;
+                ++codexConnectionCheck;
+                codexLoginView = { ...result, config: JSON.stringify(config) };
                 renderCodexLoginView();
-                if (popup) popup.location.replace(url.href);
             } catch (error) {
-                popup?.close();
-                showCodexRecovery(error, error.code === 'codex_gateway_network_error' || error.code === 'unauthorized' ? null : 'login', false);
-            } finally { button.disabled = false; codexLoginStarting = false; }
+                if (scope !== codexAuthorizationScope) return;
+                ++codexConnectionCheck;
+                showCodexRecovery(error, null, false);
+            } finally {
+                buttons.forEach(button => { button.disabled = false; });
+                codexLoginStarting = false;
+            }
         }
 
         function renderCodexLoginView() {
+            if (!codexLoginView) return;
             setCodexGatewayStatus(i18n('codex_device_code', codexLoginView.code));
-            const link = document.createElement('a');
-            link.href = codexLoginView.url; link.target = '_blank'; link.rel = 'noopener noreferrer';
-            link.textContent = i18n('codex_login_page');
-            const status = document.getElementById('codexGatewayStatus');
-            status.appendChild(document.createElement('br'));
-            status.appendChild(link);
-            document.getElementById('codexLoginButton').hidden = false;
+            document.getElementById('codexDeviceCode').value = codexLoginView.code;
+            document.getElementById('codexDeviceCodePanel').hidden = false;
         }
 
         function codexGatewayModule() {
@@ -13076,28 +13149,29 @@
             const config = modalOpen ? codexGatewayFormConfig() : codexGatewaySettingsConfig();
             const revision = ++codexConnectionCheck;
             codexConnectionChecking++;
-            const pendingLogin = codexLoginView && Date.now() < codexLoginView.expiresAt;
+            if (codexLoginView && Date.now() >= codexLoginView.expiresAt) clearCodexAuthorization();
             try {
-                if (!pendingLogin) {
-                    setCodexGatewayStatus(i18n('codex_status_checking'));
-                    document.getElementById('codexLoginButton').hidden = true;
-                }
+                if (!codexLoginView) setCodexGatewayStatus(i18n('codex_status_checking'));
                 const status = await codexGatewayModule().getStatus(config, { timeoutMs: 28_000 });
                 if (revision !== codexConnectionCheck) return;
-                const authType = status?.auth?.type === 'chatgpt' ? 'chatgpt' : 'none';
-                const authLabel = i18n(authType === 'chatgpt' ? 'codex_auth_chatgpt' : 'codex_auth_none');
-                const ready = status?.ready === true && !!status.checkedAt && !status.statusError;
-                if (ready) {
-                    codexRecoveryShown = '';
-                    codexLoginView = null;
-                    document.getElementById('codexLoginButton').hidden = true;
-                    setCodexGatewayStatus(i18n('codex_status_ready', authLabel), 'success');
-                } else if (pendingLogin && status.recovery === 'login') {
+                const connection = codexGatewayModule().connectionDetails(status);
+                const authLabel = connection.authType === 'chatgpt'
+                    ? status.auth?.email || i18n('codex_auth_chatgpt')
+                    : i18n(connection.authType === 'none' ? 'codex_auth_none' : 'codex_auth_unknown');
+                const ready = connection.ready;
+                const pendingCode = codexLoginView && (status.authorization?.pending === true ||
+                    (status.authorization?.pending === undefined && connection.recovery === 'login'));
+                if (pendingCode) {
                     renderCodexLoginView();
+                } else if (ready) {
+                    codexRecoveryShown = '';
+                    clearCodexAuthorization();
+                    setCodexGatewayStatus(i18n('codex_status_ready', authLabel), 'success');
                 } else {
-                    const error = { code: status.statusError || 'codex_gateway_upgrade_required',
+                    if (status.authorization?.pending === false) clearCodexAuthorization();
+                    const error = { code: connection.code,
                         message: i18n('codex_status_not_ready', authLabel) };
-                    showCodexRecovery(error, status.recovery, recover && !codexRecoveryShown);
+                    showCodexRecovery(error, connection.recovery, recover && !codexRecoveryShown);
                     codexRecoveryShown = error.code;
                 }
                 if (notify) showToast(i18n(ready ? 'toast_connection_success' : 'toast_connection_failed') +
@@ -20271,8 +20345,9 @@
                 const target = document.getElementById(id);
                 if (target._codexText !== text) {
                     target._codexText = text;
-                    target.textContent = text;
-                    target.style.whiteSpace = 'pre-wrap';
+                    const content = document.createElement('pre');
+                    content.textContent = text;
+                    target.replaceChildren(content);
                 }
             }
             error.textContent = request.error || '';
@@ -20302,6 +20377,7 @@
             }
             codexOutputDismissed = false;
             renderCodexOutput();
+            document.body.appendChild(document.getElementById('codexOutputModal'));
             showModal('codexOutputModal');
         }
 
