@@ -22,11 +22,13 @@ async function runInteractive(command, args, options) {
   }
 }
 
-async function readIsolatedStatus(config, { refreshToken = false } = {}) {
+async function readIsolatedStatus(config, { refreshToken = true } = {}) {
   const appServer = new CodexAppServer(config);
   try {
     await appServer.start();
     const account = await appServer.readAccount({ refreshToken });
+    requireChatgptAccount(account);
+    await appServer.request('account/rateLimits/read');
     return {
       ready: account?.type === 'chatgpt',
       auth: publicAuth(account),

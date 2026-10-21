@@ -7,9 +7,8 @@
 
     const MAX_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
     const DEFAULT_REQUEST_TIMEOUT_MS = MAX_REQUEST_TIMEOUT_MS;
-    // The gateway enforces each lecture's generation deadline, which starts
-    // only after the job leaves its queue. Polling must outlast queue time
-    // plus that deadline, so this is only a backstop.
+    // The gateway enforces the lecture deadline. Reconnected event streams
+    // attach to the same background job until that deadline or completion.
     const LECTURE_JOB_MAX_WAIT_MS = 6 * 60 * 60 * 1000;
     // Tolerate brief Wi-Fi/VPN drops or a device waking from sleep.
     const LECTURE_JOB_OFFLINE_GRACE_MS = 2 * 60 * 1000;
@@ -215,15 +214,69 @@
         }
     }
 
+    async function readEventStream(response, onEvent, onActivity) {
+        if (!response.body || !response.body.getReader) {
+            throw gatewayError('codex_gateway_stream_unavailable', 'This browser cannot read streaming responses.');
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '', event = 'message', lines = [];
+        const line = value => {
+            if (value === '') {
+                const done = lines.length && onEvent(event, lines.join('\n')) === true;
+                event = 'message'; lines = [];
+                return done;
+            }
+            if (value.startsWith(':')) return false;
+            const colon = value.indexOf(':');
+            const field = colon < 0 ? value : value.slice(0, colon);
+            let data = colon < 0 ? '' : value.slice(colon + 1);
+            if (data.startsWith(' ')) data = data.slice(1);
+            if (field === 'event') event = data;
+            if (field === 'data') lines.push(data);
+            return false;
+        };
+        try {
+            while (true) {
+                const chunk = await reader.read();
+                onActivity?.();
+                buffer += decoder.decode(chunk.value, { stream: !chunk.done });
+                let match;
+                while ((match = /\r\n|\r|\n/.exec(buffer))) {
+                    if (!chunk.done && match[0] === '\r' && match.index === buffer.length - 1) break;
+                    const value = buffer.slice(0, match.index);
+                    buffer = buffer.slice(match.index + match[0].length);
+                    if (line(value)) return;
+                }
+                if (chunk.done) return;
+            }
+        } finally {
+            await reader.cancel().catch(() => {});
+            reader.releaseLock();
+        }
+    }
+
+    function reportProgress(callback, progress) {
+        if (typeof callback !== 'function') return;
+        try { callback(progress); }
+        catch (error) { console.warn('AI preview could not be displayed', error); }
+    }
+
     async function requestJson(config, path, options) {
         const requestOptions = options || {};
         const fetchImpl = requestOptions.fetchImpl || (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
         if (!fetchImpl) throw gatewayError('codex_gateway_fetch_unavailable', 'Fetch is unavailable');
 
         const requestedTimeout = Number(requestOptions.timeoutMs) || DEFAULT_REQUEST_TIMEOUT_MS;
-        const timeoutMs = Math.min(MAX_REQUEST_TIMEOUT_MS, Math.max(1, requestedTimeout));
+        const maximumTimeout = requestOptions.resumable ? LECTURE_JOB_MAX_WAIT_MS : MAX_REQUEST_TIMEOUT_MS;
+        const timeoutMs = Math.min(maximumTimeout, Math.max(1, requestedTimeout));
         const controller = new AbortController();
         let timedOut = false;
+        let idleTimer;
+        const touchStream = () => {
+            clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => { timedOut = true; controller.abort(); }, 45_000);
+        };
         const timer = setTimeout(function () {
             timedOut = true;
             controller.abort();
@@ -236,8 +289,9 @@
         }
 
         try {
+            if (requestOptions.resumable) touchStream();
             const headers = {
-                'Accept': 'application/json',
+                'Accept': requestOptions.stream ? 'text/event-stream' : 'application/json',
                 'Authorization': 'Bearer ' + normalizeToken(config && config.token)
             };
             if (requestOptions.body !== undefined) headers['Content-Type'] = 'application/json';
@@ -247,6 +301,28 @@
                 body: requestOptions.body === undefined ? undefined : JSON.stringify(requestOptions.body),
                 signal: controller.signal
             });
+            if (response.ok && requestOptions.stream) {
+                touchStream();
+                if (!String(response.headers.get('content-type') || '').includes('text/event-stream')) {
+                    throw gatewayError('codex_gateway_upgrade_required', 'Update and restart the gateway to enable streaming.');
+                }
+                let result;
+                let completed = false;
+                await readEventStream(response, (event, raw) => {
+                    let data;
+                    try { data = JSON.parse(raw); }
+                    catch (cause) { throw gatewayError('codex_gateway_response_invalid', 'The gateway sent an invalid stream event.', undefined, cause); }
+                    if (event === 'progress') reportProgress(requestOptions.onProgress, data);
+                    if (event === 'error') {
+                        const error = gatewayError(data.code, data.message, data.status);
+                        error.terminal = true;
+                        throw error;
+                    }
+                    if (event === 'result') { result = data; completed = true; return true; }
+                }, touchStream);
+                if (!completed) throw gatewayError('codex_gateway_stream_disconnected', 'The gateway stream ended before completion.');
+                return result;
+            }
             const data = await readResponseJson(response);
             if (!response.ok) {
                 const code = data && data.error && data.error.code
@@ -259,7 +335,6 @@
             }
             return data;
         } catch (error) {
-            if (error && error.code) throw error;
             if (controller.signal.aborted) {
                 throw gatewayError(
                     timedOut ? 'codex_gateway_timeout' : 'codex_gateway_aborted',
@@ -268,11 +343,13 @@
                     error
                 );
             }
+            if (error && typeof error.code === 'string') throw error;
             throw gatewayError('codex_gateway_network_error', error && error.message
                 ? error.message
                 : 'Unable to reach Codex Gateway', undefined, error);
         } finally {
             clearTimeout(timer);
+            clearTimeout(idleTimer);
             if (externalSignal) externalSignal.removeEventListener('abort', abortFromExternal);
         }
     }
@@ -301,6 +378,7 @@
             ? await askLectureJob(config, payload, options)
             : await requestJson(config, '/v1/ask', {
                 ...(options || {}),
+                stream: true,
                 method: 'POST',
                 body: payload
             });
@@ -333,27 +411,38 @@
             }
             let job;
             try {
-                job = await requestJson(config, submitted ? '/v1/lecture-jobs/' + id : '/v1/lecture-jobs', {
+                if (!submitted) {
+                    job = await requestJson(config, '/v1/lecture-jobs', {
+                        fetchImpl: options.fetchImpl, signal: options.signal,
+                        timeoutMs: 30 * 1000, method: 'POST', body: { id, request: payload }
+                    });
+                    submitted = true;
+                }
+                if (!job || job.status === 'pending') job = await requestJson(config, '/v1/lecture-jobs/' + id + '/events', {
                     fetchImpl: options.fetchImpl,
                     signal: options.signal,
-                    timeoutMs: 30 * 1000,
-                    ...(submitted ? {} : { method: 'POST', body: { id, request: payload } })
+                    timeoutMs: LECTURE_JOB_MAX_WAIT_MS,
+                    resumable: true,
+                    stream: true,
+                    onProgress: report
                 });
                 submitted = true;
                 lastNetworkError = null;
                 networkFailures = 0;
                 offlineSince = 0;
             } catch (error) {
+                if (error.terminal || error.code === 'chatgpt_login_required') throw error;
                 if (error.code === 'job_not_found') {
                     // The gateway restarted or its result retention elapsed.
                     submitted = false;
-                    report({ stage: 'queued', partialText: '', reasoningSummary: '', elapsedMs: 0 });
-                } else if (error.code === 'not_found' && !submitted) {
+                    report({ stage: 'preparing', partialText: '', reasoningSummary: '', elapsedMs: 0 });
+                } else if (error.code === 'not_found') {
                     throw gatewayError('codex_gateway_upgrade_required', 'Update and restart the private gateway to enable resumable lecture generation.');
-                } else if (error.code === 'codex_gateway_network_error' || error.code === 'codex_gateway_timeout' || error.name === 'AbortError'
-                    || (error.status >= 502 && error.status <= 504 && error.code !== 'queue_full')) {
+                } else if (error.code === 'codex_gateway_network_error' || error.code === 'codex_gateway_stream_disconnected'
+                    || error.code === 'codex_gateway_timeout' || error.name === 'AbortError'
+                    || (error.status >= 502 && error.status <= 504)) {
                     lastNetworkError = error;
-                    report({ stage: 'reconnecting' });
+                    report({ stage: 'reconnecting', errorCode: error.code });
                     if (!offlineSince) offlineSince = Date.now();
                     if (++networkFailures >= 3 && Date.now() - offlineSince >= LECTURE_JOB_OFFLINE_GRACE_MS) {
                         throw gatewayError('codex_gateway_network_error',
@@ -366,16 +455,21 @@
             if (job) {
                 if (job.status === 'completed') return job;
                 if (job.status === 'failed') {
-                    throw gatewayError(job.error && job.error.code, job.error && job.error.message);
+                    throw gatewayError(job.error && job.error.code, job.error && job.error.message, job.error && job.error.status);
                 }
                 if (job.status !== 'pending') {
                     throw gatewayError('codex_gateway_response_invalid', 'The gateway returned an invalid lecture job status.');
                 }
-                // Older gateways omit progress; keep their existing behavior.
                 if (job.progress) report(job.progress);
             }
-            const delay = networkFailures ? Math.min(15000, 2000 * 2 ** (networkFailures - 1)) : 2000;
-            await new Promise(resolve => setTimeout(resolve, delay));
+            const delay = networkFailures ? Math.min(15000, 2000 * 2 ** (networkFailures - 1)) : 100;
+            await new Promise((resolve, reject) => {
+                const cleanup = () => options.signal?.removeEventListener('abort', cancel);
+                const timer = setTimeout(() => { cleanup(); resolve(); }, delay);
+                const cancel = () => { clearTimeout(timer); cleanup(); reject(gatewayError('codex_gateway_aborted', 'Stopped waiting for the lecture.')); };
+                options.signal?.addEventListener('abort', cancel, { once: true });
+                if (options.signal?.aborted) cancel();
+            });
         }
         throw gatewayError('codex_gateway_timeout', lastNetworkError
             ? 'The gateway connection was lost. Reopen the lecture to retrieve its result.'
@@ -392,6 +486,8 @@
         serializePdfAttachment,
         buildAskPayload,
         requestJson,
+        readEventStream,
+        reportProgress,
         getStatus,
         listModels,
         ask

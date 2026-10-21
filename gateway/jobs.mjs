@@ -5,17 +5,27 @@ import { validateAskBody } from './request.mjs';
 const DEFAULT_JOB_TIMEOUT_MS = 60 * 60 * 1000;
 const RESULT_RETENTION_MS = 30 * 60 * 1000;
 
-// Lecture jobs outlive individual HTTP requests. Only the job deadline, not a
-// browser disconnect while polling, cancels inference. The deadline starts when
-// the job leaves the inference queue, so a chapter waiting behind another
-// lecture keeps its full generation time. The registry is private to this
-// gateway process and all access still requires its bearer token.
+// Lecture jobs outlive their event streams. Each job starts immediately and
+// keeps its result available for reconnecting clients with the same job id.
 export class LectureJobs {
-  constructor(engine, maxPending, { timeoutMs = DEFAULT_JOB_TIMEOUT_MS } = {}) {
+  constructor(engine, { timeoutMs = DEFAULT_JOB_TIMEOUT_MS } = {}) {
     this.engine = engine;
-    this.maxActive = maxPending + 1;
     this.timeoutMs = timeoutMs;
     this.jobs = new Map();
+  }
+
+  subscribe(id, listener) {
+    this.read(id);
+    const job = this.jobs.get(id);
+    job.listeners.add(listener);
+    listener(this.read(id));
+    return () => job.listeners.delete(listener);
+  }
+
+  publish(id) {
+    const job = this.jobs.get(id);
+    const snapshot = this.read(id);
+    for (const listener of job.listeners) listener(snapshot);
   }
 
   prune() {
@@ -55,14 +65,16 @@ export class LectureJobs {
       }
       return this.read(body.id);
     }
-    const active = [...this.jobs.values()].filter(job => !job.finishedAt).length;
-    if (active >= this.maxActive || this.jobs.size >= 64) {
-      throw new GatewayError('queue_full', 'The private Codex gateway lecture queue is full.', 503);
+    // Retention limits evict completed results only and never gate inference.
+    for (const [id, job] of this.jobs) {
+      if (this.jobs.size < 64) break;
+      if (job.finishedAt && !job.listeners.size) this.jobs.delete(id);
     }
     const controller = new AbortController();
     const job = {
       status: 'pending', fingerprint, finishedAt: null, createdAt: Date.now(),
-      progress: { stage: 'queued', partialText: '', reasoningSummary: '' },
+      progress: { stage: 'preparing', partialText: '', reasoningSummary: '' },
+      listeners: new Set(),
     };
     this.jobs.set(body.id, job);
     const minutes = Math.max(1, Math.round(this.timeoutMs / 60_000));
@@ -74,25 +86,26 @@ export class LectureJobs {
       ), this.timeoutMs);
       timer.unref?.();
     };
-    // Validation above is synchronous. The remaining work is deliberately not
-    // awaited by the HTTP handler, including time spent in the inference queue.
+    // The HTTP submission returns immediately while inference runs independently.
     Promise.resolve().then(() => this.engine.ask(body.request, {
       signal: controller.signal,
+      lecture: true,
       onStart: startDeadline,
-      onProgress: progress => { job.progress = progress; },
+      onProgress: progress => { job.progress = progress; this.publish(body.id); },
     }))
       .then(result => {
         job.result = result;
         job.status = 'completed';
       }, error => {
         const failure = asGatewayError(error);
-        job.error = { code: failure.code, message: failure.message };
+        job.error = { code: failure.code, message: failure.message, status: failure.statusCode };
         job.status = 'failed';
       })
       .finally(() => {
         clearTimeout(timer);
         delete job.progress;
         job.finishedAt = Date.now();
+        this.publish(body.id);
       });
     return this.read(body.id);
   }
