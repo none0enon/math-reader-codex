@@ -43,6 +43,15 @@ npm start
 
 `setup` creates a random access token and prints the token file's path, without printing its value. Copy the contents of that file into math-reader-codex's **Gateway token** field. The default token file is `gateway/.state/gateway-token`; ChatGPT login is stored separately inside `gateway/.state/codex-home`. Both are excluded from Git. Keep this directory private and out of cloud backups or shared ZIPs.
 
+`npm start` runs a small supervisor that keeps the gateway process running and updates it:
+
+- If the gateway process exits, it is started again after 1–60 seconds.
+- Every 10 minutes the supervisor fetches the checkout's upstream branch (normally `origin/main`). When new commits change `gateway/`, it waits until no generation or device-code sign-in is in progress, fast-forwards the checkout, runs `npm ci` when `package.json` or `package-lock.json` changed, and restarts the gateway. The gateway itself confirms it is idle before the restart.
+- A new version that fails within 60 seconds of starting is rolled back and not retried; the next upstream commit is tried normally.
+- Nothing is updated when the checkout has local commits or uncommitted changes to tracked files. Set `MATH_READER_GATEWAY_AUTO_UPDATE=0` to turn updating off. Changes to the supervisor itself take effect the next time `npm start` is run.
+
+Auto-update runs code from the upstream branch without further confirmation, as `git pull` would. Keep the checkout pointed at this repository.
+
 By default, `start` listens on `http://127.0.0.1:4747`. Keep it running while using AI. Set these environment variables before running a command when you need a different configuration:
 
 | Variable | Purpose |
@@ -54,6 +63,7 @@ By default, `start` listens on `http://127.0.0.1:4747`. Keep it running while us
 | `MATH_READER_GATEWAY_TLS_CERT` / `MATH_READER_GATEWAY_TLS_KEY` | Certificate and private-key paths for native HTTPS |
 | `MATH_READER_GATEWAY_TIMEOUT_MS` | Overall request timeout; default 600000 ms |
 | `MATH_READER_GATEWAY_LECTURE_TIMEOUT_MS` | Generation time for one chapter lecture job, counted from submission; default 3600000 ms |
+| `MATH_READER_GATEWAY_AUTO_UPDATE` | `0` stops `npm start` from installing upstream gateway commits |
 
 By default, the gateway uses its pinned CLI dependency. Do not substitute a desktop-bundled binary merely because it is newer: tool exposure can differ even when the same feature flags are supplied. A CLI override must pass the security/protocol tests and real account checks before use.
 
@@ -131,7 +141,7 @@ Every Codex generation request enters the shared output viewer, including all 23
 
 Each concurrent request has its own number, feature/source label, public messages, readable summary, answer buffer, completion state, and error. The request selector switches between these independent buffers. Closing the viewer lets generation continue; **Codex output** in the gateway settings reopens it. Failure retains the text already received, and clearing finished previews only clears these transient in-memory buffers. These buffers never enter app data, IndexedDB, backups, or cloud synchronization.
 
-Chapter jobs continue after a browser disconnect. The page retains the job id and connection/model selection, then reconnects to the event stream when reopened. Jobs have a 60-minute generation deadline from submission, and completed results remain for up to 30 minutes; retained completed results can be evicted when 64 records accumulate. Connection retries tolerate about two minutes offline. Restarting the gateway loses in-memory jobs and causes missing jobs to be resubmitted. Update the gateway and frontend together, then restart the gateway.
+Chapter jobs continue after a browser disconnect. The page retains the job id and connection/model selection, then reconnects to the event stream when reopened. Jobs have a 60-minute generation deadline from submission, and completed results remain for up to 30 minutes; retained completed results can be evicted when 64 records accumulate. Connection retries tolerate about two minutes offline. Restarting the gateway loses in-memory jobs and causes missing jobs to be resubmitted; automatic updates therefore restart only while no job is running.
 
 The connection settings page checks on open, on return to the app, and every 30 seconds while the app is visible and Codex is configured. A generation transport or authorization failure opens the existing gateway settings. Editing the URL or token clears the previous success state; stale asynchronous checks cannot overwrite a newer configuration.
 
