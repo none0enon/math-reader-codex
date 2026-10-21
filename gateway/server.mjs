@@ -339,5 +339,16 @@ export async function startGateway(config = loadConfig(), options = {}) {
   };
   process.once('SIGINT', () => void stop());
   process.once('SIGTERM', () => void stop());
+  // The `npm start` supervisor updates and restarts this process only when it
+  // answers idle; a restart is accepted and begun in the same event-loop turn.
+  if (process.send) {
+    process.on('message', (message) => {
+      if (message?.type !== 'idle' && message?.type !== 'restart') return;
+      const accepted = !stopping && !gateway.engine.busy;
+      process.send({ type: `${message.type}:reply`, accepted }, () => {});
+      if (accepted && message.type === 'restart') void stop();
+    });
+    process.channel?.unref();
+  }
   return { ...gateway, stop };
 }

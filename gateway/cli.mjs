@@ -88,6 +88,12 @@ async function main() {
       process.stdout.write(`${JSON.stringify(await readIsolatedStatus(config), null, 2)}\n`);
       break;
     case 'start': {
+      const { supervise } = await import('./supervisor.mjs');
+      await supervise(config);
+      break;
+    }
+    // The gateway process itself, run and restarted by `start`.
+    case 'serve': {
       const { startGateway } = await import('./server.mjs');
       await startGateway(config);
       break;

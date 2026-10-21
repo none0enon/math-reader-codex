@@ -190,6 +190,11 @@ export class GatewayEngine {
       : { status: 'failed', error: login.error };
   }
 
+  // A restart now would cut off a generation or a device code being entered.
+  get busy() {
+    return this.activeRequests > 0 || this.#publicLogin()?.status === 'pending';
+  }
+
   async status() {
     // Share only simultaneous probes; every later check verifies upstream again.
     if (this.statusCheck) return this.statusCheck;
