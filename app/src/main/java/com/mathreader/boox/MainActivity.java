@@ -249,6 +249,7 @@ public class MainActivity extends AppCompatActivity {
         webView.addJavascriptInterface(penBridge, "BooxPenNative");
         webView.addJavascriptInterface(downloadBridge, "BooxDownloadNative");
         webView.addJavascriptInterface(recordingBridge, "BooxRecordingNative");
+        webView.addJavascriptInterface(new AuthorizationBridge(this), "BooxAuthorizationNative");
 
         webView.loadUrl(buildStartUrl());
     }

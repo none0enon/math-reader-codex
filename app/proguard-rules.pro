@@ -5,3 +5,4 @@
 # JS 桥接接口
 -keepclassmembers class com.mathreader.boox.BooxPenBridge { @android.webkit.JavascriptInterface <methods>; }
 -keepclassmembers class com.mathreader.boox.DownloadBridge { @android.webkit.JavascriptInterface <methods>; }
+-keepclassmembers class com.mathreader.boox.AuthorizationBridge { @android.webkit.JavascriptInterface <methods>; }

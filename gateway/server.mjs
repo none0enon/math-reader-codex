@@ -306,6 +306,11 @@ export async function startGateway(config = loadConfig(), options = {}) {
     `math-reader-codex gateway listening on ${protocol}://${host}:${address.port}\n` +
       `Bearer token file: ${gateway.tokenFile}\n`,
   );
+  // A signed-out gateway starts ChatGPT device sign-in by itself; the app
+  // shows the same code from /v1/status.
+  void gateway.engine.status()
+    .then((status) => (status.recovery === 'login' ? gateway.engine.startLogin() : null))
+    .catch((error) => process.stdout.write(`ChatGPT sign-in could not start: ${error?.message || error}\n`));
 
   let stopping = false;
   const stop = async () => {

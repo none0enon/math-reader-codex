@@ -22,11 +22,13 @@ async function runInteractive(command, args, options) {
   }
 }
 
-async function readIsolatedStatus(config, { refreshToken = true } = {}) {
+// Never force a refresh here: it would rotate the refresh token that a
+// running gateway still holds in memory.
+async function readIsolatedStatus(config) {
   const appServer = new CodexAppServer(config);
   try {
     await appServer.start();
-    const account = await appServer.readAccount({ refreshToken });
+    const account = await appServer.readAccount();
     requireChatgptAccount(account);
     await appServer.request('account/rateLimits/read');
     return {
@@ -63,7 +65,7 @@ async function login(config) {
     cwd: config.workspaceDirectory,
     env: environment,
   });
-  const status = await readIsolatedStatus(config, { refreshToken: true });
+  const status = await readIsolatedStatus(config);
   requireChatgptAccount(status.auth.type === 'chatgpt' ? status.auth : null);
   process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
 }
