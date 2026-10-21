@@ -308,7 +308,7 @@ export class CodexAppServer extends EventEmitter {
       if (message.error) {
         pending.reject(
           new GatewayError(
-            /(?:\b401\b|unauthorized|refresh[_ -]?token|token.{0,30}(?:expired|revoked)|sign[ -]?in|log[ -]?in required)/i.test(message.error.message || '')
+            /(?:\b401\b|unauthorized|refresh[_ -]?token|token.{0,30}(?:expired|revoked)|sign[ -]?in|log[ -]?in required|(?:codex account|chatgpt) authentication required)/i.test(message.error.message || '')
               ? 'chatgpt_login_required' : 'codex_rpc_error',
             message.error.message || 'Codex app-server rejected the request.',
             502,
@@ -369,14 +369,14 @@ export function requireChatgptAccount(account) {
   if (account?.type === 'apiKey') {
     throw new GatewayError(
       'chatgpt_login_required',
-      'API-key authentication is refused. Run `npm run login` and sign in with ChatGPT.',
+      'API-key authentication is refused. Sign in with ChatGPT from API Setting, or run `npm run login`.',
       503,
     );
   }
   if (account?.type !== 'chatgpt') {
     throw new GatewayError(
       'chatgpt_login_required',
-      'This isolated gateway is not signed in. Run `npm run login`.',
+      'This isolated gateway is not signed in to ChatGPT. Sign in from API Setting, or run `npm run login`.',
       503,
     );
   }

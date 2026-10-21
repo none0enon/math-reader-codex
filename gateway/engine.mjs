@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { publicAuth, requireChatgptAccount } from './app-server.mjs';
@@ -25,6 +25,15 @@ const FORBIDDEN_ITEM_TYPES = new Set([
   'subAgentActivity',
   'webSearch',
 ]);
+
+// The official CLI states the same lifetime for its one-time device codes.
+const DEVICE_CODE_LIFETIME_MS = 15 * 60_000;
+
+function describeError(error) {
+  const message = error?.message || String(error || 'Codex failed.');
+  const cause = error?.cause?.message;
+  return (cause && !message.includes(cause) ? `${message} (${cause})` : message).slice(0, 1000);
+}
 
 function reasoningEfforts(model) {
   return (model.supportedReasoningEfforts || [])
@@ -64,7 +73,7 @@ function turnFailure(turn) {
     case 'unauthorized':
       return new GatewayError(
         'chatgpt_login_required',
-        'The isolated ChatGPT login is no longer authorized. Run `npm run login`.',
+        'The isolated ChatGPT login is no longer authorized. Sign in again from API Setting, or run `npm run login`.',
         503,
       );
     case 'badRequest':
@@ -102,15 +111,83 @@ export class GatewayEngine {
     this.prepareImages = options.prepareImages || prepareImageUploads;
     this.activeRequests = 0;
     this.statusCheck = null;
-    this.loginAttempt = null;
+    this.appServerStart = null;
+    this.appServerStartedAt = 0;
+    // The device-code sign-in currently offered to the user, or why the last one ended.
+    this.login = null;
+    this.loginStart = null;
+    this.appServer.on('notification', (notification) => this.#onNotification(notification));
+    this.appServer.on('closed', () => this.#onAppServerClosed());
   }
 
   async start() {
-    await this.appServer.start();
+    await this.#ensureAppServer();
   }
 
   async stop() {
     await this.appServer.stop();
+  }
+
+  // Codex is restarted on demand after it exits, so a crashed app-server does
+  // not leave the gateway unusable until `npm start` is run again.
+  async #ensureAppServer() {
+    if (this.appServer.running && this.appServer.initialized) return;
+    this.appServerStart ||= (async () => {
+      this.appServerStartedAt = Date.now();
+      await this.appServer.start();
+    })().finally(() => { this.appServerStart = null; });
+    await this.appServerStart;
+  }
+
+  // A running app-server keeps its in-memory login, so `npm run login` in
+  // another process only takes effect after Codex restarts.
+  async #reloadExternalLogin() {
+    if (this.activeRequests || this.loginStart || this.appServerStart) return false;
+    let modified;
+    try {
+      modified = (await stat(join(this.config.codexHome, 'auth.json'))).mtimeMs;
+    } catch {
+      return false;
+    }
+    if (modified <= this.appServerStartedAt) return false;
+    await this.appServer.stop();
+    await this.#ensureAppServer();
+    return true;
+  }
+
+  #onAppServerClosed() {
+    // A device code belongs to the app-server process that requested it.
+    if (this.login?.status === 'pending') {
+      this.login = { status: 'failed', error: 'Codex restarted before sign-in completed.' };
+    }
+  }
+
+  #onNotification({ method, params }) {
+    if (method !== 'account/login/completed') return;
+    if (this.login?.status !== 'pending' || params?.loginId !== this.login.loginId) return;
+    if (params.success) {
+      this.login = null;
+      process.stdout.write('ChatGPT sign-in completed.\n');
+      return;
+    }
+    this.login = { status: 'failed', error: params.error || 'ChatGPT sign-in was not completed.' };
+    process.stdout.write(`ChatGPT sign-in was not completed: ${this.login.error}\n`);
+  }
+
+  #publicLogin() {
+    if (this.login?.status === 'pending' && Date.now() >= this.login.expiresAt) {
+      this.login = { status: 'failed', error: 'The device code expired.' };
+    }
+    const login = this.login;
+    if (!login) return null;
+    return login.status === 'pending'
+      ? {
+          status: 'pending',
+          verificationUrl: login.verificationUrl,
+          userCode: login.userCode,
+          expiresAt: new Date(login.expiresAt).toISOString(),
+        }
+      : { status: 'failed', error: login.error };
   }
 
   async status() {
@@ -123,69 +200,99 @@ export class GatewayEngine {
   async #status() {
     let account = null;
     let statusError;
-    if (this.appServer.running && this.appServer.initialized) {
+    const verify = async (refreshToken) => {
+      account = await this.appServer.readAccount({ refreshToken, timeoutMs: 12_000 });
+      requireChatgptAccount(account);
+      // This authenticated upstream request also detects a revoked access token.
+      await this.appServer.request('account/rateLimits/read', {}, { timeoutMs: 12_000 });
+    };
+    const loginRejected = (error) => {
+      if (error?.code !== 'chatgpt_login_required') throw error;
+    };
+    try {
+      await this.#ensureAppServer();
       try {
-        account = await this.appServer.readAccount({ refreshToken: true, timeoutMs: 12_000 });
-        requireChatgptAccount(account);
-        // This authenticated upstream request also detects a revoked access token.
-        await this.appServer.request('account/rateLimits/read', {}, { timeoutMs: 12_000 });
+        await verify(false);
       } catch (error) {
-        statusError = error;
+        loginRejected(error);
+        // Refresh tokens rotate, so refresh only after ChatGPT rejected the login.
+        try {
+          await verify(true);
+        } catch (refreshError) {
+          loginRejected(refreshError);
+          // A login written by `npm run login` needs a fresh Codex process.
+          if (!(await this.#reloadExternalLogin())) throw refreshError;
+          await verify(false);
+        }
       }
+    } catch (error) {
+      statusError = error;
     }
     const auth = publicAuth(account);
     const ready = Boolean(this.appServer.running && this.appServer.initialized && auth.type === 'chatgpt' && !statusError);
     const loginRequired = statusError?.code === 'chatgpt_login_required' || account?.type === 'apiKey';
+    if (ready && this.login) {
+      const { loginId } = this.login;
+      this.login = null;
+      if (loginId) void this.appServer.request('account/login/cancel', { loginId }, { timeoutMs: 5_000 }).catch(() => {});
+    }
     return {
       ready,
       checkedAt: new Date().toISOString(),
       recovery: ready ? null : loginRequired ? 'login' : 'gateway',
       auth,
+      login: this.#publicLogin(),
       appServer: {
         running: this.appServer.running,
         initialized: this.appServer.initialized,
       },
       requests: { active: this.activeRequests, pending: 0 },
       ...(account?.type === 'apiKey' ? { authError: 'api_key_auth_refused' } : {}),
-      ...(statusError ? { statusError: statusError.code || 'codex_unavailable' } : {}),
+      ...(statusError
+        ? { statusError: statusError.code || 'codex_unavailable', statusMessage: describeError(statusError) }
+        : {}),
     };
   }
 
   async startLogin() {
-    if (!this.appServer.running || !this.appServer.initialized) await this.appServer.start();
-    if (this.loginAttempt) return this.loginAttempt;
-    let loginId;
-    const clear = () => {
-      clearTimeout(timer);
-      this.loginAttempt = null;
-      this.appServer.removeListener('notification', onNotification);
-      this.appServer.removeListener('closed', clear);
-    };
-    const onNotification = notification => {
-      if (notification.method === 'account/login/completed' && notification.params?.loginId === loginId) clear();
-    };
-    const timer = setTimeout(clear, 10 * 60_000);
-    timer.unref?.();
-    this.appServer.on('notification', onNotification);
-    this.appServer.once('closed', clear);
-    this.loginAttempt = this.appServer.request('account/login/start', { type: 'chatgptDeviceCode' })
-      .then(result => {
-        if (!result?.verificationUrl || !result?.userCode) {
-          throw new GatewayError('codex_login_unavailable', 'Run npm run login in the gateway directory, then check the connection again.', 503);
-        }
-        loginId = result.loginId;
-        return { verificationUrl: result.verificationUrl, userCode: result.userCode };
-      });
+    await this.#ensureAppServer();
+    const pending = this.#publicLogin();
+    if (pending?.status === 'pending') return pending;
+    // Another device-code request would cancel the code already shown to the user.
+    this.loginStart ||= this.#requestDeviceCode().finally(() => { this.loginStart = null; });
+    return this.loginStart;
+  }
+
+  async #requestDeviceCode() {
+    const result = await this.appServer.request('account/login/start', { type: 'chatgptDeviceCode' });
+    let verificationUrl = null;
     try {
-      return await this.loginAttempt;
-    } catch (error) {
-      clear();
-      throw error;
+      verificationUrl = new URL(result?.verificationUrl);
+    } catch {}
+    if (verificationUrl?.protocol !== 'https:' || typeof result?.userCode !== 'string' || !result.userCode
+        || typeof result?.loginId !== 'string') {
+      throw new GatewayError(
+        'codex_login_unavailable',
+        'Codex did not return a ChatGPT device code. Run `npm ci` in the gateway directory and restart the gateway, or run `npm run login`.',
+        502,
+      );
     }
+    this.login = {
+      status: 'pending',
+      loginId: result.loginId,
+      verificationUrl: verificationUrl.href,
+      userCode: result.userCode,
+      expiresAt: Date.now() + DEVICE_CODE_LIFETIME_MS,
+    };
+    process.stdout.write(
+      `ChatGPT sign-in: open ${verificationUrl.href} and enter code ${result.userCode} (expires in 15 minutes).\n`,
+    );
+    return this.#publicLogin();
   }
 
   async models({ signal } = {}) {
-    const account = await this.appServer.readAccount({ signal, refreshToken: true });
+    await this.#ensureAppServer();
+    const account = await this.appServer.readAccount({ signal });
     requireChatgptAccount(account);
     const catalog = await this.appServer.listModels({ signal });
     return { data: catalog.filter((model) => !model.hidden).map(publicModel) };
@@ -287,7 +394,10 @@ export class GatewayEngine {
       if (messageId && messageId !== id && !completedMessages.has(messageId) && liveText) beginRetry();
       messageId = id;
     };
-    const account = await this.appServer.readAccount({ signal, refreshToken: true });
+    await this.#ensureAppServer();
+    // Turns recover an expired access token inside Codex. Forcing a refresh
+    // per request would rotate the refresh token for every concurrent request.
+    const account = await this.appServer.readAccount({ signal });
     requireChatgptAccount(account);
     const selectedModel = await this.#chooseModel(request, signal);
     const model = selectedModel.model || selectedModel.id;
