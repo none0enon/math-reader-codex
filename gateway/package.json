@@ -11,6 +11,7 @@
   },
   "scripts": {
     "setup": "node ./cli.mjs setup",
+    "install-service": "node ./cli.mjs install-service",
     "login": "node ./cli.mjs login",
     "start": "node ./cli.mjs start",
     "status": "node ./cli.mjs status"
