@@ -40,9 +40,9 @@ The installer also registers `math-reader-codex://gateway/start`. On this Mac, t
 
 For a gateway on another computer, the app offers startup steps and a copyable command to run on that computer. A browser on a BOOX or another remote device needs that computer awake and its existing VPN/HTTPS route connected. The startup button on a Mac is shown for loopback gateway addresses.
 
-For a foreground gateway on Mac or Linux, use:
+The managed Mac runtime is in `~/Library/Application Support/math-reader-codex/runtime/gateway`. Run any manual `npm run login` or `npm run status` command there; those commands use the same private state as the background service.
 
-From the repository's `gateway` directory:
+For a foreground gateway on Mac or Linux, run these commands from the repository's `gateway` directory:
 
 ```sh
 npm ci

@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { chmod, mkdir, open, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { GatewayError } from './errors.mjs';
@@ -97,7 +98,10 @@ function absoluteOrResolved(value, fallback) {
 }
 
 export function loadConfig(env = process.env) {
-  const stateDirectory = absoluteOrResolved(env.MATH_READER_GATEWAY_STATE_DIR, '.state');
+  const macInstallation = join(homedir(), 'Library', 'Application Support', 'math-reader-codex');
+  const defaultState = process.platform === 'darwin' && gatewayDirectory === join(macInstallation, 'runtime', 'gateway')
+    ? join(macInstallation, 'state') : '.state';
+  const stateDirectory = absoluteOrResolved(env.MATH_READER_GATEWAY_STATE_DIR, defaultState);
   const tokenFile = absoluteOrResolved(
     env.MATH_READER_GATEWAY_TOKEN_FILE,
     join(stateDirectory, 'gateway-token'),

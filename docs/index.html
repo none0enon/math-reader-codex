@@ -12914,6 +12914,7 @@
             "codex_install_guide": "打开安装说明",
             "codex_technical_details": "技术详情",
             "codex_enter_token": "填写网关访问令牌",
+            "codex_token_guide": "请填写网关电脑安装时提示的 gateway-token 文件内容，然后点击连接并继续。",
             "codex_enter_url": "填写网关地址",
             "codex_url_guide": "请填写网关地址，然后点击连接并继续。",
             "codex_retry_login": "重新获取授权代码",
@@ -12934,6 +12935,7 @@
             "codex_install_guide": "Open installation instructions",
             "codex_technical_details": "Technical details",
             "codex_enter_token": "Enter gateway token",
+            "codex_token_guide": "Enter the contents of the gateway-token file reported by the installer, then choose Connect and continue.",
             "codex_enter_url": "Enter gateway address",
             "codex_url_guide": "Enter the gateway address, then choose Connect and continue.",
             "codex_retry_login": "Request a new authorization code",
@@ -12954,6 +12956,7 @@
             "codex_install_guide": "Ouvrir les instructions d’installation",
             "codex_technical_details": "Détails techniques",
             "codex_enter_token": "Saisir le jeton de la passerelle",
+            "codex_token_guide": "Saisissez le contenu du fichier gateway-token indiqué par l’installateur, puis choisissez Connecter et continuer.",
             "codex_enter_url": "Saisir l’adresse de la passerelle",
             "codex_url_guide": "Saisissez l’adresse, puis choisissez Connecter et continuer.",
             "codex_retry_login": "Demander un nouveau code",
@@ -13164,7 +13167,8 @@
             if (codexRecoveryRendered === rendered) return;
             const tokenError = code === 'unauthorized' || code === 'codex_gateway_token_required';
             const urlError = /^codex_gateway_(?:url_|https_)/.test(code);
-            const unreachable = CODEX_UNREACHABLE_ERRORS.test(code) || code === 'codex_gateway_stream_disconnected';
+            const unreachable = CODEX_UNREACHABLE_ERRORS.test(code) || code === 'codex_gateway_stream_disconnected' ||
+                [502, 503, 504].includes(error?.status);
             const key = tokenError ? 'codex_token_guide'
                 : urlError ? 'codex_url_guide'
                 : code === 'codex_gateway_upgrade_required' ? 'codex_gateway_outdated'
