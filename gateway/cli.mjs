@@ -80,11 +80,6 @@ async function main() {
     case 'setup':
       await setup(config);
       break;
-    case 'install-service': {
-      const { installMacService } = await import('./macos-service.mjs');
-      await installMacService(config);
-      break;
-    }
     case 'login':
       await login(config);
       break;
@@ -104,7 +99,7 @@ async function main() {
       break;
     }
     default:
-      throw new Error(`Unknown command: ${command}. Expected setup, install-service, login, start, or status.`);
+      throw new Error(`Unknown command: ${command}. Expected setup, login, start, or status.`);
   }
 }
 

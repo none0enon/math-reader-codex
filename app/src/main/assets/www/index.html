@@ -6156,11 +6156,9 @@
                 </div>
                 <div class="codex-gateway-status" id="codexGatewayStatus" role="status" aria-live="polite"></div>
                 <button type="button" class="fetch-models-btn" style="width:100%;margin-bottom:4px;"
-                    onclick="testCodexGatewayConnection()" data-i18n="codex_test_connection">连接并继续</button>
+                    onclick="testCodexGatewayConnection()" data-i18n="codex_test_connection">测试 Codex Gateway</button>
                 <button type="button" class="fetch-models-btn" id="codexLoginButton" hidden
                     onclick="loginCodexGateway()" data-i18n="codex_login">打开授权页并复制代码</button>
-                <button type="button" class="fetch-models-btn" id="codexCancelWaitingButton" hidden
-                    onclick="cancelCodexConnectionWaiters()" data-i18n="codex_cancel_waiting">取消等待中的请求</button>
                 <button type="button" class="fetch-models-btn" onclick="showCodexOutput()"
                     data-i18n="codex_output_title">Codex 返回内容</button>
             </div>
@@ -12901,72 +12899,6 @@
             return (document.getElementById('aiPersonaText')?.value) || appData.settings.aiPersona || i18n('ai_persona_default');
         }
         
-        // Connection recovery actions use the existing settings controls.
-        Object.assign(I18N.zh, {
-            "codex_reconnect_guide": "网关尚未连接。请启动网关；本页会自动检查连接并进入 ChatGPT 授权，连接就绪后继续等待中的请求。",
-            "codex_start_local": "启动这台 Mac 上的网关",
-            "codex_show_start_steps": "打开网关启动步骤",
-            "codex_start_requested": "请在系统提示中打开 math-reader-codex。正在等待网关响应；首次使用请完成下方安装。",
-            "codex_start_steps": "在运行网关的电脑上，打开 math-reader-codex 仓库的 gateway 目录并执行下方命令。Mac 会安装登录后自动启动的后台服务和网页启动器；其他电脑会在终端启动网关。保持网关电脑唤醒，并连接原有的 VPN/Tailscale。",
-            "codex_copy_start_command": "复制启动命令",
-            "codex_start_copied": "启动命令已复制，请在网关电脑执行",
-            "codex_copy_manually": "请选中上面的命令并复制",
-            "codex_install_guide": "打开安装说明",
-            "codex_technical_details": "技术详情",
-            "codex_enter_token": "填写网关访问令牌",
-            "codex_token_guide": "请填写网关电脑安装时提示的 gateway-token 文件内容，然后点击连接并继续。",
-            "codex_enter_url": "填写网关地址",
-            "codex_url_guide": "请填写网关地址，然后点击连接并继续。",
-            "codex_retry_login": "重新获取授权代码",
-            "codex_cancel_waiting": "取消等待中的请求",
-            "codex_wait_cancelled": "等待已取消。设置完成后可重新发起请求。",
-            "codex_wait_expired": "等待连接超过 15 分钟，请连接后重新发起请求。",
-            "codex_test_connection": "连接并继续"
-        });
-        Object.assign(I18N.en, {
-            "codex_reconnect_guide": "The gateway is not connected yet. Start it below. This page checks the connection, opens ChatGPT sign-in when needed, and continues waiting requests once ready.",
-            "codex_start_local": "Start the gateway on this Mac",
-            "codex_show_start_steps": "Open gateway startup steps",
-            "codex_start_requested": "Open math-reader-codex in the system prompt. Waiting for the gateway; complete the installation below on first use.",
-            "codex_start_steps": "On the gateway computer, open the gateway directory in the math-reader-codex repository and run the command below. On Mac this installs a login service and browser launcher; on other computers it starts the gateway in the terminal. Keep the computer awake and connected to your existing VPN/Tailscale.",
-            "codex_copy_start_command": "Copy startup command",
-            "codex_start_copied": "Command copied. Run it on the gateway computer.",
-            "codex_copy_manually": "Select and copy the command above.",
-            "codex_install_guide": "Open installation instructions",
-            "codex_technical_details": "Technical details",
-            "codex_enter_token": "Enter gateway token",
-            "codex_token_guide": "Enter the contents of the gateway-token file reported by the installer, then choose Connect and continue.",
-            "codex_enter_url": "Enter gateway address",
-            "codex_url_guide": "Enter the gateway address, then choose Connect and continue.",
-            "codex_retry_login": "Request a new authorization code",
-            "codex_cancel_waiting": "Cancel waiting requests",
-            "codex_wait_cancelled": "Waiting cancelled. Submit the request again after configuring the gateway.",
-            "codex_wait_expired": "Connection wait exceeded 15 minutes. Connect and submit the request again.",
-            "codex_test_connection": "Connect and continue"
-        });
-        Object.assign(I18N.fr, {
-            "codex_reconnect_guide": "La passerelle attend une connexion. Démarrez-la ci-dessous. Cette page vérifie la connexion, propose la connexion ChatGPT et reprend les demandes en attente dès que la passerelle est prête.",
-            "codex_start_local": "Démarrer la passerelle sur ce Mac",
-            "codex_show_start_steps": "Ouvrir les étapes de démarrage",
-            "codex_start_requested": "Ouvrez math-reader-codex dans la demande du système. En attente de la passerelle ; effectuez l’installation ci-dessous lors de la première utilisation.",
-            "codex_start_steps": "Sur l’ordinateur de la passerelle, ouvrez le dossier gateway du dépôt math-reader-codex et exécutez la commande ci-dessous. Sur Mac, elle installe un service au démarrage de session et un lanceur web ; ailleurs, elle démarre la passerelle dans le terminal. Gardez l’ordinateur éveillé et connecté à votre VPN/Tailscale.",
-            "codex_copy_start_command": "Copier la commande de démarrage",
-            "codex_start_copied": "Commande copiée. Exécutez-la sur l’ordinateur de la passerelle.",
-            "codex_copy_manually": "Sélectionnez et copiez la commande ci-dessus.",
-            "codex_install_guide": "Ouvrir les instructions d’installation",
-            "codex_technical_details": "Détails techniques",
-            "codex_enter_token": "Saisir le jeton de la passerelle",
-            "codex_token_guide": "Saisissez le contenu du fichier gateway-token indiqué par l’installateur, puis choisissez Connecter et continuer.",
-            "codex_enter_url": "Saisir l’adresse de la passerelle",
-            "codex_url_guide": "Saisissez l’adresse, puis choisissez Connecter et continuer.",
-            "codex_retry_login": "Demander un nouveau code",
-            "codex_cancel_waiting": "Annuler les demandes en attente",
-            "codex_wait_cancelled": "Attente annulée. Relancez la demande après avoir configuré la passerelle.",
-            "codex_wait_expired": "L’attente a dépassé 15 minutes. Connectez-vous et relancez la demande.",
-            "codex_test_connection": "Connecter et continuer"
-        });
-
-
         // ==================== API Modal (照抄index.html) ====================
         const CODEX_DEFAULT_REASONING_EFFORTS = [
             'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'
@@ -12982,10 +12914,6 @@
         let codexLoginStarting = null;
         let codexLoginPollTimer = null;
         let codexLoginAutoOpened = '';
-        let codexRecoveryActive = false;
-        let codexRecoveryRendered = '';
-        let codexReadinessCheck = null;
-        const codexConnectionWaiters = new Set();
 
         function isPackagedAndroidRuntime() {
             return window.location?.hostname === 'appassets.androidplatform.net' ||
@@ -13013,7 +12941,6 @@
             const status = document.getElementById('codexGatewayStatus');
             if (!status) return;
             codexLoginRendered = '';
-            codexRecoveryRendered = '';
             status.replaceChildren();
             String(message || '').split('\n').forEach((line, index) => {
                 if (index) status.appendChild(document.createElement('br'));
@@ -13044,112 +12971,8 @@
 
         function invalidateCodexConnection() {
             codexConnectionCheck++;
-            codexRecoveryActive = false;
-            cancelCodexConnectionWaiters();
             clearCodexLogin();
             setCodexGatewayStatus('');
-        }
-
-        function cancelCodexConnectionWaiters() {
-            for (const waiter of [...codexConnectionWaiters]) waiter.finish(
-                codexGatewayModule().gatewayError('codex_gateway_recovery_cancelled', i18n('codex_wait_cancelled')));
-        }
-
-        function codexStatusReady(status) {
-            return status?.ready === true && !!status.checkedAt && !status.statusError;
-        }
-
-        function appendCodexRecoveryButton(label, action, parent = document.getElementById('codexGatewayStatus')) {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'fetch-models-btn';
-            button.textContent = i18n(label);
-            button.addEventListener('click', action);
-            parent.appendChild(document.createElement('br'));
-            parent.appendChild(button);
-            return button;
-        }
-
-        function showCodexStartupSteps() {
-            const status = document.getElementById('codexGatewayStatus');
-            if (status.querySelector('[data-codex-startup]')) return;
-            const steps = document.createElement('div');
-            steps.dataset.codexStartup = 'true';
-            const isMac = /Mac/.test(navigator.platform || '') && navigator.maxTouchPoints < 2;
-            const command = isMac ? 'git pull --ff-only && npm ci && npm run install-service'
-                : 'git pull --ff-only && npm ci && npm start';
-            steps.textContent = i18n('codex_start_steps');
-            const code = document.createElement('pre');
-            code.textContent = command;
-            steps.appendChild(code);
-            appendCodexRecoveryButton('codex_copy_start_command', async () => {
-                try { await navigator.clipboard.writeText(command); showToast(i18n('codex_start_copied')); }
-                catch { showToast(i18n('codex_copy_manually')); }
-            }, steps);
-            const guide = document.createElement('a');
-            guide.href = 'https://github.com/none0enon/math-reader-codex/blob/main/gateway/README.md#start-the-gateway';
-            guide.target = '_blank'; guide.rel = 'noopener noreferrer';
-            guide.textContent = i18n('codex_install_guide');
-            steps.appendChild(document.createElement('br'));
-            steps.appendChild(guide);
-            status.appendChild(steps);
-        }
-
-        function launchCodexGateway() {
-            // The installed macOS URL handler accepts this one fixed action.
-            // No credentials or user-supplied command enter the URL.
-            const link = document.createElement('a');
-            link.href = 'math-reader-codex://gateway/start';
-            link.click();
-            showToast(i18n('codex_start_requested'));
-            showCodexStartupSteps();
-            scheduleCodexLoginPoll();
-        }
-
-        async function ensureCodexGatewayReady(config, { signal } = {}) {
-            if (signal?.aborted) throw codexGatewayModule().gatewayError('codex_gateway_aborted', i18n('codex_wait_cancelled'));
-            const identity = codexConfigIdentity(config);
-            let failure;
-            try {
-                if (codexReadinessCheck?.identity !== identity) {
-                    const checking = { identity, request: codexGatewayModule().getStatus(config, { timeoutMs: 10_000 }) };
-                    codexReadinessCheck = checking;
-                    checking.request.finally(() => {
-                        if (codexReadinessCheck === checking) codexReadinessCheck = null;
-                    }).catch(() => {});
-                }
-                const status = await codexReadinessCheck.request;
-                if (signal?.aborted) throw codexGatewayModule().gatewayError('codex_gateway_aborted', i18n('codex_wait_cancelled'));
-                if (codexStatusReady(status)) return;
-                failure = { code: codexStatusNeedsLogin(status) ? 'chatgpt_login_required'
-                    : status.statusError || 'codex_unavailable', message: status.statusMessage || '' };
-            } catch (error) {
-                if (error.code === 'codex_gateway_aborted') throw error;
-                failure = error;
-            }
-            closeCodexOutput();
-            // Keep the original call pending before any prompt/PDF is submitted.
-            showCodexRecovery(failure);
-            if (identity !== codexConfigIdentity(currentCodexConfig())) throw codexGatewayModule().gatewayError(
-                'codex_gateway_recovery_cancelled', i18n('codex_wait_cancelled'));
-            return new Promise((resolve, reject) => {
-                let timer;
-                const onAbort = () => waiter.finish(codexGatewayModule().gatewayError('codex_gateway_aborted', i18n('codex_wait_cancelled')));
-                const waiter = { identity, finish(error) {
-                    if (!codexConnectionWaiters.delete(waiter)) return;
-                    clearTimeout(timer);
-                    signal?.removeEventListener('abort', onAbort);
-                    document.getElementById('codexCancelWaitingButton').hidden = codexConnectionWaiters.size === 0;
-                    if (error) reject(error); else resolve(true);
-                } };
-                codexConnectionWaiters.add(waiter);
-                document.getElementById('codexCancelWaitingButton').hidden = false;
-                timer = setTimeout(() => waiter.finish(codexGatewayModule().gatewayError(
-                    'codex_gateway_recovery_cancelled', i18n('codex_wait_expired'))), 15 * 60_000);
-                if (signal?.aborted) onAbort();
-                else signal?.addEventListener('abort', onAbort, { once: true });
-                scheduleCodexLoginPoll();
-            });
         }
 
         function showCodexRecovery(error, recovery, open = true) {
@@ -13161,59 +12984,24 @@
                 return;
             }
             clearCodexLogin();
-            codexRecoveryActive = true;
-            scheduleCodexLoginPoll();
-            const rendered = code + ':' + codexConfigIdentity(currentCodexConfig());
-            if (codexRecoveryRendered === rendered) return;
-            const tokenError = code === 'unauthorized' || code === 'codex_gateway_token_required';
-            const urlError = /^codex_gateway_(?:url_|https_)/.test(code);
-            const unreachable = CODEX_UNREACHABLE_ERRORS.test(code) || code === 'codex_gateway_stream_disconnected' ||
-                [502, 503, 504].includes(error?.status);
-            const key = tokenError ? 'codex_token_guide'
-                : urlError ? 'codex_url_guide'
+            // The gateway answered when it reports its own state; only transport
+            // failures mean that npm start, VPN or the URL need checking.
+            const key = code === 'unauthorized' ? 'codex_token_guide'
                 : code === 'codex_gateway_upgrade_required' ? 'codex_gateway_outdated'
                 : recovery === 'gateway' || code === 'codex_unavailable' || code === 'codex_timeout' ? 'codex_service_guide'
                 : 'codex_reconnect_guide';
-            setCodexGatewayStatus(i18n(key));
-            if (tokenError || urlError) appendCodexRecoveryButton(tokenError ? 'codex_enter_token' : 'codex_enter_url', () => {
-                document.getElementById(tokenError ? 'codexGatewayToken' : 'codexGatewayUrl').focus();
-            });
-            else if (unreachable) {
-                let local = false;
-                try { local = codexGatewayModule().isLoopbackHostname(new URL(currentCodexConfig().baseUrl).hostname); } catch {}
-                if (local && /Mac/.test(navigator.platform || '') && navigator.maxTouchPoints < 2) {
-                    appendCodexRecoveryButton('codex_start_local', launchCodexGateway);
-                }
-                appendCodexRecoveryButton('codex_show_start_steps', showCodexStartupSteps);
-            } else if (code === 'codex_gateway_upgrade_required') showCodexStartupSteps();
-            if (error?.message) {
-                const details = document.createElement('details');
-                const summary = document.createElement('summary');
-                summary.textContent = i18n('codex_technical_details');
-                details.appendChild(summary);
-                details.appendChild(document.createTextNode(error.message));
-                document.getElementById('codexGatewayStatus').appendChild(details);
-            }
-            codexRecoveryRendered = rendered;
+            setCodexGatewayStatus((error?.message ? error.message + '\n\n' : '') + i18n(key), 'error');
         }
 
         function showCodexLoginFailure(error) {
             clearCodexLogin();
             const code = error?.code || '';
-            if (code === 'unauthorized' || CODEX_UNREACHABLE_ERRORS.test(code)) {
-                showCodexRecovery(error, null, false);
-                return;
-            }
             // Gateways without ChatGPT sign-in support answer /v1/login with 404.
             const key = code === 'unauthorized' ? 'codex_token_guide'
                 : code === 'not_found' || error?.status === 404 ? 'codex_gateway_outdated'
                 : CODEX_UNREACHABLE_ERRORS.test(code) ? 'codex_reconnect_guide'
                 : 'codex_login_guide';
             setCodexGatewayStatus(i18n('codex_login_failed', error?.message || error) + '\n\n' + i18n(key), 'error');
-            document.getElementById('codexLoginButton').hidden = false;
-            document.getElementById('codexLoginButton').textContent = i18n('codex_retry_login');
-            codexRecoveryActive = true;
-            scheduleCodexLoginPoll();
         }
 
         function codexStatusNeedsLogin(status) {
@@ -13325,7 +13113,7 @@
             clearTimeout(codexLoginPollTimer);
             codexLoginPollTimer = setTimeout(() => {
                 codexLoginPollTimer = null;
-                if ((!codexLoginView && !codexRecoveryActive && !codexConnectionWaiters.size) || !apiModalOpen()) return;
+                if (!codexLoginView || !apiModalOpen()) return;
                 // Paused while the authorization page is in front; resumes on return.
                 if (document.hidden || codexConnectionChecking) scheduleCodexLoginPoll();
                 else void testCodexGatewayConnection({ notify: false });
@@ -13365,7 +13153,6 @@
             status.appendChild(link);
             codexLoginRendered = rendered;
             document.getElementById('codexLoginButton').hidden = false;
-            document.getElementById('codexLoginButton').textContent = i18n('codex_login');
         }
 
         function codexGatewayModule() {
@@ -13428,9 +13215,7 @@
         async function fetchCodexModels() {
             try {
                 setCodexGatewayStatus(i18n('codex_status_checking'));
-                const config = codexGatewayFormConfig();
-                await ensureCodexGatewayReady(config);
-                codexGatewayModels = await codexGatewayModule().listModels(config);
+                codexGatewayModels = await codexGatewayModule().listModels(codexGatewayFormConfig());
                 const select = document.getElementById('codexModelSelect');
                 select.innerHTML = '';
                 const promptOption = document.createElement('option');
@@ -13454,8 +13239,8 @@
                 await testCodexGatewayConnection({ notify: false });
                 showToast(i18n('codex_models_loaded', codexGatewayModels.length));
             } catch (error) {
-                if (error.code === 'codex_gateway_recovery_cancelled') { showToast(error.message); return; }
                 showCodexRecovery(error, null, false);
+                showToast(i18n('toast_fetch_models_failed') + (error.message || error));
             }
         }
 
@@ -13465,14 +13250,14 @@
             const revision = ++codexConnectionCheck;
             codexConnectionChecking++;
             try {
-                if (codexLoginView?.identity !== identity && !codexRecoveryActive) {
+                if (codexLoginView?.identity !== identity) {
                     setCodexGatewayStatus(i18n('codex_status_checking'));
                     document.getElementById('codexLoginButton').hidden = true;
                 }
                 const status = await codexGatewayModule().getStatus(config, { timeoutMs: 45_000 });
                 if (revision !== codexConnectionCheck) return;
                 const authLabel = codexAccountLabel(status?.auth);
-                const ready = codexStatusReady(status);
+                const ready = status?.ready === true && !!status.checkedAt && !status.statusError;
                 // Gateways from before web sign-in report no recovery and have no
                 // /v1/login: the browser rejects its CORS preflight as "Failed to fetch".
                 const outdated = !ready && !('recovery' in (status || {}));
@@ -13481,12 +13266,8 @@
                     const signedIn = !!codexLoginView;
                     codexRecoveryShown = '';
                     codexLoginAutoOpened = '';
-                    codexRecoveryActive = false;
                     clearCodexLogin();
                     setCodexGatewayStatus(i18n('codex_status_ready', authLabel), 'success');
-                    for (const waiter of [...codexConnectionWaiters]) {
-                        if (waiter.identity === identity) waiter.finish();
-                    }
                     if (signedIn) showToast(i18n('codex_login_success'));
                 } else if (outdated) {
                     showCodexRecovery({ code: 'codex_gateway_upgrade_required', message: i18n('codex_status_not_ready', authLabel) },
@@ -13508,7 +13289,8 @@
                     showCodexRecovery(error, 'gateway', recover && !codexRecoveryShown);
                     codexRecoveryShown = error.code;
                 }
-                if (notify && ready) showToast(i18n('toast_connection_success'));
+                if (notify) showToast(ready ? i18n('toast_connection_success') : needsLogin
+                    ? i18n('codex_login_required') : i18n('toast_connection_failed') + i18n('codex_status_not_ready', authLabel));
             } catch (error) {
                 if (revision !== codexConnectionCheck) return;
                 // Keep a live code across a brief drop, e.g. Wi-Fi waking after the browser.
@@ -13519,6 +13301,7 @@
                     showCodexRecovery(error, null, recover && !codexRecoveryShown);
                     codexRecoveryShown = error.code || 'network';
                 }
+                if (notify) showToast(i18n('toast_connection_failed') + (error.message || error));
             } finally { codexConnectionChecking--; }
         }
 
@@ -20756,10 +20539,6 @@
                 if (codexOutputSelected === id) scheduleCodexOutputRender();
             };
             return {
-                resumeAfterConnection() {
-                    hideModal('apiModal');
-                    if (!hasNativePreview) showCodexOutput(id);
-                },
                 update(progress) {
                     for (const key of ['partialText', 'commentaryText', 'reasoningSummary']) {
                         if (typeof progress[key] === 'string') request[key] = progress[key];
@@ -20781,7 +20560,6 @@
 
         async function doCodexGatewayRequest(systemPrompt, messages, options = {}) {
             const settings = appData.settings || {};
-            const config = codexGatewaySettingsConfig(settings);
             const output = beginCodexOutputRequest(options);
             const onProgress = progress => {
                 output.update(progress);
@@ -20793,13 +20571,8 @@
                 } else codexGatewayModule().reportProgress(options.onProgress, progress);
             };
             try {
-                // A retained lecture job can be read even if the account now
-                // needs sign-in; only new submissions need a readiness gate.
-                if (!options.lectureJob?.id && await ensureCodexGatewayReady(config, { signal: options.signal })) {
-                    output.resumeAfterConnection();
-                }
                 const result = await codexGatewayModule().ask(
-                    config,
+                    codexGatewaySettingsConfig(settings),
                     {
                         systemPrompt,
                         messages,

@@ -27,22 +27,7 @@ Install JavaScript dependencies from this directory with `npm ci`. This includes
 
 ## Start the gateway
 
-On macOS, run these commands in the repository's `gateway` directory:
-
-```sh
-npm ci
-npm run install-service
-```
-
-This installs the runtime and private state under `~/Library/Application Support/math-reader-codex`, registers a login service, and starts the gateway. It preserves the existing gateway token and ChatGPT login when migrating an installation. Keeping the runtime, working directory and logs outside Documents/Desktop lets the login service start without those folders' privacy permissions. The existing service supervisor handles crashes and upstream updates. The Mac still needs to stay awake.
-
-The installer also registers `math-reader-codex://gateway/start`. On this Mac, the app's **Start the gateway on this Mac** button opens that launcher and starts a stopped service. macOS or the browser may ask to open math-reader-codex. The launcher accepts only that fixed action and leaves a running gateway alone. Re-running the installer while the managed service is running refreshes the launcher without interrupting requests. An older installation with an active generation or pending sign-in must finish that work before migration.
-
-For a gateway on another computer, the app offers startup steps and a copyable command to run on that computer. A browser on a BOOX or another remote device needs that computer awake and its existing VPN/HTTPS route connected. The startup button on a Mac is shown for loopback gateway addresses.
-
-The managed Mac runtime is in `~/Library/Application Support/math-reader-codex/runtime/gateway`. Run any manual `npm run login` or `npm run status` command there; those commands use the same private state as the background service.
-
-For a foreground gateway on Mac or Linux, run these commands from the repository's `gateway` directory:
+From the repository's `gateway` directory:
 
 ```sh
 npm ci
@@ -158,9 +143,9 @@ Each concurrent request has its own number, feature/source label, public message
 
 Chapter jobs continue after a browser disconnect. The page retains the job id and connection/model selection, then reconnects to the event stream when reopened. Jobs have a 60-minute generation deadline from submission, and completed results remain for up to 30 minutes; retained completed results can be evicted when 64 records accumulate. Connection retries tolerate about two minutes offline. Restarting the gateway loses in-memory jobs and causes missing jobs to be resubmitted; automatic updates therefore restart only while no job is running.
 
-The connection settings page checks on open, on return to the app, and every 30 seconds while the app is visible and Codex is configured. Connection recovery checks every 3 seconds while settings are open. A new generation or model-list request checks readiness before submitting its input; when connection or authorization is needed it remains pending for up to 15 minutes and continues after the gateway confirms readiness. **Cancel waiting requests** cancels pending work; changing the connection settings also cancels it, so a request cannot move to a different gateway silently. Existing request cancellation signals remain effective. Errors after a generation has been submitted retain the existing stream/job behavior. Editing the URL or token clears the previous success state; stale asynchronous checks cannot overwrite a newer configuration.
+The connection settings page checks on open, on return to the app, and every 30 seconds while the app is visible and Codex is configured. A generation transport or authorization failure opens the existing gateway settings. Editing the URL or token clears the previous success state; stale asynchronous checks cannot overwrite a newer configuration.
 
-When the gateway answers but ChatGPT is signed out or the login expired, API Setting opens by itself, requests the device code from the gateway (or shows the one it already has) and displays it with the official authorization link; every device shows the same code. The APK opens the authorization page in the system browser and copies the code once per sign-in; a browser opens it when a recent tap allows a new window, otherwise through **Open authorization and copy code**. While API Setting is open the page checks every 3 seconds (paused while the authorization page is in front) and switches to the signed-in account as soon as authorization completes. An expired code is replaced automatically. A failed code request keeps a retry button available. An unreachable gateway offers the Mac launcher or startup steps, and an invalid token offers a button focusing its input. Raw connection errors are available under **Technical details**. Manual authorization remains available with `npm run login` in `gateway/`.
+When the gateway answers but ChatGPT is signed out or the login expired, API Setting opens by itself, requests the device code from the gateway (or shows the one it already has) and displays it with the official authorization link; every device shows the same code. The APK opens the authorization page in the system browser and copies the code once per sign-in; a browser opens it when a recent tap allows a new window, otherwise through **Open authorization and copy code**. While API Setting is open the page checks every 3 seconds (paused while the authorization page is in front) and switches to the signed-in account as soon as authorization completes. An expired code is replaced automatically. Instructions to start the gateway and check VPN/Tailscale, HTTPS forwarding, URL and token appear only when the gateway cannot be reached; a reachable gateway whose Codex service failed shows the gateway's own error, and a gateway too old for web sign-in is identified as needing an update. Manual authorization remains available with `npm run login` in `gateway/`.
 
 The gateway restarts its Codex app-server on the next request after the process exits. Generation and model requests do not force a token refresh, so concurrent requests cannot rotate the refresh token underneath each other; `npm run status` also reads the login without refreshing it.
 
